@@ -236,15 +236,15 @@ async function loadDatabases() {
       '<td>' + esc(db.type || 'postgres') + '</td>' +
       '<td class="' + cls + '"><span class="status-dot"></span>' + txt + '</td>' +
       '<td>' +
-        '<button class="btn-icon" onclick="pingOne(\'' + db.id + '\')" title="保活">⚡</button>' +
-        (db.consoleUrl ? '<button class="btn-icon" onclick="window.open(\'' + esc(db.consoleUrl) + '\',\'_blank\')" title="打开后台">🔗</button>' : '') +
-        '<button class="btn-icon danger" onclick="deleteDb(\'' + db.id + '\')" title="删除">✕</button>' +
+        '<button class="btn-icon" onclick="pingOne(\\'' + db.id + '\\')" title="保活">⚡</button>' +
+        (db.consoleUrl ? '<button class="btn-icon" onclick="window.open(\\'' + esc(db.consoleUrl) + '\\',\\'_blank\\')" title="打开后台">🔗</button>' : '') +
+        '<button class="btn-icon danger" onclick="deleteDb(\\'' + db.id + '\\')" title="删除">✕</button>' +
       '</td></tr>';
   }
 
   // New row (Excel style - always blank at bottom)
   html += '<tr>' +
-    '<td><input type="text" id="new-url" placeholder="粘贴连接串..." oninput="onPasteUrl(this.value)" onkeydown="if(event.key===\'Enter\')testNew()"></td>' +
+    '<td><input type="text" id="new-url" placeholder="粘贴连接串..." oninput="onPasteUrl(this.value)" onkeydown="if(event.key===\\'Enter\\')testNew()"></td>' +
     '<td><span id="new-name" style="color:#98a2b3;font-size:12px">自动识别</span></td>' +
     '<td><span id="new-type" style="color:#98a2b3;font-size:12px">-</span></td>' +
     '<td><span id="new-status"></span></td>' +

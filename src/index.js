@@ -170,6 +170,11 @@ export default {
       });
     }
 
+    // Favicon
+    if (pathname === '/favicon.ico') {
+      return new Response(null, { status: 204 });
+    }
+
     // Auth
     if (method === 'POST' && pathname === '/api/auth') {
       try {
