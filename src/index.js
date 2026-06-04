@@ -49,6 +49,22 @@ async function appendLog(env, entry) {
 
 // ============ Pinger ============
 
+function detectDbType(url) {
+  const host = new URL(url).hostname;
+  if (host.includes('supabase.co') || host.includes('pooler.supabase.com')) return 'supabase-http';
+  return 'postgres';
+}
+
+function getSupabaseProjectRef(url) {
+  // Extract from username: postgres.<project_ref>
+  const u = new URL(url);
+  const user = decodeURIComponent(u.username);
+  if (user && user.includes('.')) return user.split('.')[1];
+  // Fallback: extract from hostname
+  if (u.hostname.endsWith('.supabase.co')) return u.hostname.split('.')[0];
+  return null;
+}
+
 async function pingPostgres(url) {
   const start = Date.now();
   const sql = postgres(url, {
@@ -67,6 +83,29 @@ async function pingPostgres(url) {
   } finally {
     await sql.end().catch(() => {});
   }
+}
+
+async function pingSupabase(projectRef) {
+  const start = Date.now();
+  try {
+    const res = await fetch(`https://${projectRef}.supabase.co/`, {
+      method: 'HEAD',
+      signal: AbortSignal.timeout(15000),
+    });
+    return { success: true, durationMs: Date.now() - start, note: `HTTP ${res.status}` };
+  } catch (err) {
+    return { success: false, error: err.message, durationMs: Date.now() - start };
+  }
+}
+
+async function pingDatabase(url) {
+  const type = detectDbType(url);
+  if (type === 'supabase-http') {
+    const ref = getSupabaseProjectRef(url);
+    if (!ref) return { success: false, error: 'Cannot detect Supabase project ref from URL' };
+    return pingSupabase(ref);
+  }
+  return pingPostgres(url);
 }
 
 // ============ HTML UI ============
@@ -410,7 +449,7 @@ export default {
       if (method === 'POST' && pathname === '/api/databases/test') {
         const { url: dbUrl } = await request.json();
         if (!dbUrl) return Response.json({ error: 'URL is required' }, { status: 400 });
-        const result = await pingPostgres(dbUrl);
+        const result = await pingDatabase(dbUrl);
         return Response.json(result);
       }
 
@@ -424,7 +463,7 @@ export default {
         const record = {
           id: crypto.randomUUID(),
           name,
-          type: 'postgres',
+          type: detectDbType(dbUrl),
           encryptedUrl,
           createdAt: Date.now(),
           lastPingAt: null,
@@ -453,7 +492,7 @@ export default {
         for (const db of dbs) {
           try {
             const dbUrl = await decrypt(db.encryptedUrl, env.ADMIN_KEY);
-            const result = await pingPostgres(dbUrl);
+            const result = await pingDatabase(dbUrl);
             db.lastPingAt = Date.now();
             db.lastSuccess = result.success;
             db.lastError = result.error || null;
@@ -490,7 +529,7 @@ export default {
     for (const db of dbs) {
       try {
         const dbUrl = await decrypt(db.encryptedUrl, env.ADMIN_KEY);
-        const result = await pingPostgres(dbUrl);
+        const result = await pingDatabase(dbUrl);
         db.lastPingAt = Date.now();
         db.lastSuccess = result.success;
         db.lastError = result.error || null;
