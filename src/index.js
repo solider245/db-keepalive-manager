@@ -56,14 +56,15 @@ async function setConfig(env, cfg) {
   await env.DATABASE_KV.put('config', JSON.stringify(cfg));
 }
 
-async function sendTelegram(env, message) {
+async function sendTelegram(env, message, customChatId) {
   const cfg = await getConfig(env);
-  if (!cfg.telegramBotToken || !cfg.telegramChatId) return;
+  const chatId = customChatId || cfg.telegramChatId;
+  if (!cfg.telegramBotToken || !chatId) return;
   try {
     await fetch(`https://api.telegram.org/bot${cfg.telegramBotToken}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: cfg.telegramChatId, text: message, parse_mode: 'Markdown' }),
+      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'Markdown' }),
     });
   } catch (e) {
     console.error('Telegram send failed:', e.message);
@@ -282,6 +283,88 @@ export default {
         if (body.key && body.key === env.ADMIN_KEY) return Response.json({ ok: true });
       } catch {}
       return Response.json({ error: 'Invalid key' }, { status: 401 });
+    }
+
+    // Telegram webhook (receive messages from bot)
+    if (method === 'POST' && pathname === '/api/telegram/webhook') {
+      const body = await request.json();
+      const msg = body.message?.text || '';
+      const chatId = body.message?.chat?.id;
+      if (!chatId) return Response.json({ ok: true });
+
+      // Read config to verify chat ID matches
+      const cfg = await getConfig(env);
+
+      if (msg === '/start') {
+        await sendTelegram(env, '👋 *DB Keep-Alive Bot*\\n发送 /status 查看当前数据库状态');
+      } else if (msg === '/status') {
+        const dbs = await getDatabases(env);
+        const total = dbs.length;
+        const ok = dbs.filter(d => d.lastSuccess === true).length;
+        const fail = dbs.filter(d => d.lastSuccess === false).length;
+        let text = '📊 *DB Keep-Alive 状态*\\n\\n';
+        text += `总计: ${total} 个数据库\\n正常: ${ok} 个\\n异常: ${fail} 个\\n\\n`;
+        for (const db of dbs) {
+          const icon = db.lastSuccess === true ? '✅' : db.lastSuccess === false ? '❌' : '⚪';
+          text += `${icon} ${db.name} (${db.type || 'postgres'})\\n`;
+        }
+        if (cfg.telegramChatId && String(chatId) !== String(cfg.telegramChatId)) {
+          // Unauthorized chat - silently ignore
+          return Response.json({ ok: true });
+        }
+        await sendTelegram(env, text);
+      }
+      return Response.json({ ok: true });
+    }
+
+    // Public status endpoint (no auth required)
+    if (method === 'GET' && pathname === '/api/status') {
+      const dbs = await getDatabases(env);
+      const total = dbs.length;
+      const ok = dbs.filter(d => d.lastSuccess === true).length;
+      const fail = dbs.filter(d => d.lastSuccess === false).length;
+      const body = {
+        status: fail === 0 && total > 0 ? 'healthy' : total === 0 ? 'empty' : 'degraded',
+        total,
+        healthy: ok,
+        failed: fail,
+        lastPingAt: Math.max(...dbs.map(d => d.lastPingAt || 0)),
+        databases: dbs.map(d => ({
+          id: d.id,
+          name: d.name,
+          type: d.type,
+          healthy: d.lastSuccess === true,
+          lastPingAt: d.lastPingAt,
+          lastError: d.lastError,
+        })),
+      };
+      return Response.json(body, {
+        headers: { 'Access-Control-Allow-Origin': '*' },
+      });
+    }
+
+    // SVG status badge (for README)
+    if (method === 'GET' && pathname === '/api/badge') {
+      const dbs = await getDatabases(env);
+      const total = dbs.length;
+      const ok = dbs.filter(d => d.lastSuccess === true).length;
+      const label = 'keep-alive';
+      const value = total === 0 ? 'no dbs' : ok + '/' + total + ' ok';
+      const color = total === 0 ? '#98a2b3' : ok === total ? '#039855' : '#dc2626';
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${label.length * 7 + value.length * 7 + 20}" height="20">
+        <linearGradient id="b" x2="0%" y2="100%"><stop offset="0%" stop-color="#bbb" stop-opacity=".1"/><stop offset="100%" stop-opacity=".1"/></linearGradient>
+        <rect rx="3" fill="#555" width="${label.length * 7 + 10}" height="20"/>
+        <rect rx="3" fill="${color}" x="${label.length * 7 + 10}" width="${value.length * 7 + 10}" height="20"/>
+        <text fill="#fff" font-family="DejaVu Sans,Verdana,sans-serif" font-size="11" x="5" y="14">${label}</text>
+        <text fill="#fff" font-family="DejaVu Sans,Verdana,sans-serif" font-size="11" x="${label.length * 7 + 15}" y="14">${value}</text>
+      </svg>`;
+      return new Response(svg, {
+        headers: {
+          'Content-Type': 'image/svg+xml',
+          'Cache-Control': 'no-cache',
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
     }
 
     // Require auth for all /api/ routes

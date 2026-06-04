@@ -72,6 +72,8 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
   .db-table .url-cell { max-width: 120px; }
   .db-table th:nth-child(3), .db-table td:nth-child(3) { display: none; }
 }
+.db-table th { position: relative; }
+.db-table th:after { content: ''; position: absolute; right: 0; top: 0; bottom: 0; width: 4px; cursor: col-resize; }
 </style>
 </head>
 <body>
@@ -84,6 +86,29 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
       <input type="password" id="login-key" placeholder="ADMIN_KEY" autofocus>
       <button class="btn btn-primary" onclick="login()" id="login-btn">登录</button>
       <div id="login-error" class="login-error"></div>
+    </div>
+  </div>
+
+  <!-- First-time Guide -->
+  <div id="guide-overlay" class="hidden" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:300">
+    <div style="background:#fff;border-radius:16px;padding:32px;width:420px;max-width:90vw;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.2)">
+      <div style="font-size:40px;margin-bottom:12px">🚀</div>
+      <h2 style="font-size:18px;margin-bottom:8px">欢迎使用 DB Keep-Alive Manager</h2>
+      <p style="font-size:14px;color:#667085;margin-bottom:20px;line-height:1.6">
+        三步开始保活你的数据库：
+      </p>
+      <div style="text-align:left;font-size:14px;line-height:2;margin-bottom:24px">
+        <div>1️⃣ 从上方卡片获取免费数据库连接串</div>
+        <div>2️⃣ 粘贴到表格底部输入框，点测试</div>
+        <div>3️⃣ 系统自动每10分钟保活全部</div>
+      </div>
+      <div style="font-size:13px;color:#98a2b3;margin-bottom:16px">
+        💡 还可以配置 Telegram 通知，保活异常即时推送
+      </div>
+      <button class="btn btn-primary" onclick="closeGuide()" style="width:100%;justify-content:center">开始使用</button>
+      <label style="display:block;margin-top:12px;font-size:12px;color:#98a2b3">
+        <input type="checkbox" id="guide-dont-show"> 不再显示
+      </label>
     </div>
   </div>
 
@@ -102,8 +127,8 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
 
     <!-- Provider Cards -->
     <div class="card">
-      <h2>📦 免费 PostgreSQL 数据库</h2>
-      <div class="providers">
+      <h2 onclick="toggleProviders()" style="cursor:pointer;user-select:none">📦 免费 PostgreSQL 数据库 <span id="prov-toggle" style="font-size:12px;color:#98a2b3">▲</span></h2>
+      <div id="providers-wrap" class="providers">
         <div class="provider-card" onclick="showProviderInfo('supabase')">
           <div class="name">Supabase</div>
           <div class="quota">500MB · PostgreSQL</div>
@@ -138,6 +163,7 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
         <button class="btn btn-outline" onclick="exportData()" title="导出配置" style="font-size:11px;padding:3px 8px">📤</button>
         <button class="btn btn-outline" onclick="importData()" title="导入配置" style="font-size:11px;padding:3px 8px">📥</button>
         <button class="btn btn-primary" onclick="pingAll()" id="ping-all-btn" style="font-size:12px;padding:5px 12px">⚡ 保活全部</button>
+        <button class="btn btn-outline" onclick="toggleNotif()" id="notif-toggle-btn" style="font-size:12px;padding:3px 8px">🔔</button>
         <button class="btn btn-outline" onclick="toggleBatch()" style="font-size:12px;padding:3px 8px" title="批量导入">📋</button>
       </div>
       <table class="db-table">
@@ -168,6 +194,38 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
       <h2>📋 保活日志</h2>
       <div id="logs-wrapper" class="log-list">
         <div style="color:#98a2b3;font-size:13px;text-align:center;padding:12px 0">暂无日志</div>
+      </div>
+    </div>
+
+    <!-- Notification Settings -->
+    <div class="card" id="notif-card" style="display:none">
+      <h2>🔔 通知设置 <span style="font-size:12px;font-weight:400;color:#667085">Telegram Bot</span></h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div>
+          <label style="font-size:12px;color:#344054">Bot Token</label>
+          <input type="password" id="tg-token" placeholder="123456:ABC-DEF..." style="font-size:13px;padding:6px 8px">
+        </div>
+        <div>
+          <label style="font-size:12px;color:#344054">Chat ID</label>
+          <input type="text" id="tg-chatid" placeholder="123456789" style="font-size:13px;padding:6px 8px">
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:center;flex-wrap:wrap">
+        <select id="tg-frequency" style="font-size:12px;padding:4px 8px;border:1px solid #d0d5dd;border-radius:5px">
+          <option value="daily">每日报告</option>
+          <option value="weekly">每周报告</option>
+          <option value="monthly">每月报告</option>
+          <option value="never">不推送</option>
+        </select>
+        <select id="tg-report-time" style="font-size:12px;padding:4px 8px;border:1px solid #d0d5dd;border-radius:5px">
+          <option value="9">09:00 推送</option>
+          <option value="12">12:00 推送</option>
+          <option value="18">18:00 推送</option>
+          <option value="21">21:00 推送</option>
+        </select>
+        <button class="btn btn-outline" onclick="saveNotifConfig()" style="font-size:12px;padding:4px 10px">保存</button>
+        <button class="btn btn-outline" onclick="testNotif()" style="font-size:12px;padding:4px 10px">测试通知</button>
+        <span id="notif-status" style="font-size:12px;color:#667085"></span>
       </div>
     </div>
   </div>
@@ -296,6 +354,7 @@ async function loadDatabases() {
 
   let html = '';
   let ok = 0;
+  const total = dbs.length;
   for (const db of dbs) {
     if (db.lastSuccess === true) ok++;
     const cls = db.lastSuccess === null ? 'status-none' : db.lastSuccess ? 'status-ok' : 'status-fail';
@@ -331,6 +390,10 @@ async function loadDatabases() {
   tbody.innerHTML = html;
   empty.classList.toggle('hidden', dbs.length > 0);
   document.getElementById('status-summary').textContent = '(' + ok + '/' + dbs.length + ' 正常)';
+  const countBtn = document.getElementById('ping-all-btn');
+  if (countBtn && dbs.length > 0) {
+    countBtn.textContent = '⚡ 保活全部 (' + dbs.length + ')';
+  }
   document.title = 'DB Keep-Alive (' + ok + '/' + dbs.length + ')';
 }
 
@@ -532,6 +595,69 @@ async function editName(id, td) {
   });
 }
 
+// Notification functions
+function toggleNotif() {
+  const card = document.getElementById('notif-card');
+  const isHidden = card.style.display === 'none' || card.style.display === '';
+  card.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) loadNotifConfig();
+}
+
+async function loadNotifConfig() {
+  const cfg = await api('/api/notifications/config');
+  if (!cfg) return;
+  if (cfg.telegramBotToken) document.getElementById('tg-token').value = '✓已配置';
+  if (cfg.telegramChatId) document.getElementById('tg-chatid').value = cfg.telegramChatId;
+  const freqMap = { daily: 'daily', weekly: 'weekly', monthly: 'monthly', never: 'never' };
+  if (cfg.reportFrequency && freqMap[cfg.reportFrequency]) {
+    document.getElementById('tg-frequency').value = cfg.reportFrequency;
+  }
+  if (cfg.reportTime) {
+    document.getElementById('tg-report-time').value = String(cfg.reportTime);
+  }
+}
+
+async function saveNotifConfig() {
+  const token = document.getElementById('tg-token').value;
+  const chatId = document.getElementById('tg-chatid').value;
+  const freq = document.getElementById('tg-frequency').value;
+  const reportTime = document.getElementById('tg-report-time').value;
+  const body = { reportFrequency: freq, reportTime };
+  if (token && token !== '✓已配置') body.telegramBotToken = token;
+  if (chatId) body.telegramChatId = chatId;
+  const res = await api('/api/notifications/config', { method: 'POST', body: JSON.stringify(body) });
+  document.getElementById('notif-status').textContent = res && res.ok ? '✅ 已保存' : '❌ 保存失败';
+  setTimeout(() => document.getElementById('notif-status').textContent = '', 2000);
+}
+
+async function testNotif() {
+  const res = await api('/api/notifications/test', { method: 'POST' });
+  document.getElementById('notif-status').textContent = res && res.ok ? '✅ 已发送' : '❌ ' + (res?.error || '失败');
+  setTimeout(() => document.getElementById('notif-status').textContent = '', 3000);
+}
+
+// Guide
+function closeGuide() {
+  if (document.getElementById('guide-dont-show').checked) {
+    localStorage.setItem('guide-done', 'true');
+  }
+  document.getElementById('guide-overlay').classList.add('hidden');
+  document.getElementById('guide-overlay').style.display = 'none';
+}
+
+// Providers toggle
+function toggleProviders() {
+  const wrap = document.getElementById('providers-wrap');
+  const toggle = document.getElementById('prov-toggle');
+  if (wrap.style.display === 'none') {
+    wrap.style.display = 'grid';
+    toggle.textContent = '▲';
+  } else {
+    wrap.style.display = 'none';
+    toggle.textContent = '▼';
+  }
+}
+
 // Init
 document.getElementById('login-key').addEventListener('keydown', function(e) { if (e.key === 'Enter') login(); });
 if (adminKey) {
@@ -540,6 +666,13 @@ if (adminKey) {
   document.getElementById('dashboard-view').classList.remove('hidden');
   refreshAll();
   setInterval(refreshAll, 30000);
+  // Show guide for first-time users
+  if (!localStorage.getItem('guide-done')) {
+    setTimeout(() => {
+      document.getElementById('guide-overlay').classList.remove('hidden');
+      document.getElementById('guide-overlay').style.display = 'flex';
+    }, 800);
+  }
 }
 </script>
 </body>

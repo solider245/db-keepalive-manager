@@ -1,70 +1,90 @@
-# DB Keep-Alive Manager
+<p align="center">
+  <img src="https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare" />
+  <img src="https://img.shields.io/badge/PostgreSQL-✓-4169E1?logo=postgresql" />
+  <img src="https://img.shields.io/badge/license-MIT-green" />
+  <img src="https://deploy.workers.cloudflare.com/button" />
+</p>
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/solider245/db-keepalive-manager)
+<h1 align="center">DB Keep-Alive Manager</h1>
 
-> A Cloudflare Worker that provides a web UI to manage and automatically keep multiple PostgreSQL databases alive.
+<p align="center">
+  A Cloudflare Worker that keeps your free-tier PostgreSQL databases awake — automatically.
+</p>
 
-Prevents serverless PostgreSQL databases (Supabase, Neon, Render, etc.) from going to sleep due to inactivity. Add your connection strings in the web UI, and the Worker automatically pings each database every 10 minutes.
+---
+
+## What is this?
+
+**DB Keep-Alive Manager** is a Cloudflare Worker with a built-in web UI for managing and auto-keep-alive of multiple PostgreSQL databases. It prevents Supabase, Neon, Render, Aiven and other free-tier databases from going to sleep due to inactivity.
+
+Connection strings are **AES-256-GCM encrypted** at rest in Cloudflare KV. The Worker supports **Telegram notifications** for failure alerts and daily/weekly/monthly scheduled reports.
+
+No build step, no extra infrastructure — deploy once and forget.
 
 ## Features
 
-- **Web management panel** — no additional frontend build, just open the URL
-- **Add / test / remove** databases directly from the UI
-- **AES-256-GCM encrypted** connection strings at rest
-- **Automatic keep-alive** every 10 minutes via Cloudflare Cron Trigger
-- **Real-time status** and ping history for each database
-- **Zero external dependencies** beyond `postgres.js`
+- **Web UI** — No build step, no frontend framework. Open the URL and go.
+- **One-click deploy** — Fork + Deploy button = done.
+- **AES-256 encrypted** connection strings at rest.
+- **Auto keep-alive** every 10 minutes via Cloudflare Cron Trigger.
+- **Failure retry** — Automatically retries once after 3 seconds on failure.
+- **Batch import** — Paste multiple connection strings at once.
+- **Telegram alerts** — Get notified when a database fails to respond.
+- **Scheduled reports** — Configurable daily / weekly / monthly summaries via Telegram.
+- **Export / import config** — Backup and restore your database list as JSON.
+- **Double-click editing** — Rename any database by double-clicking its name.
+- **Provider auto-detection** — Automatically detects Supabase, Neon, Render, Aiven, Fly.io, Railway and more.
+- **Provider info cards** — Quick guides to get free database connection strings.
+- **Status badge** — Ready for your own README status badge.
 
 ## Quick Start
 
-### Method 1: Deploy Button (推荐)
+### Method 1 (recommended) — Deploy Button
 
-1. **Fork** this repository on GitHub
-2. Click the **Deploy to Cloudflare** button above
-3. Authorize Cloudflare and enter your `ADMIN_KEY` when prompted
-4. Wait for deployment to complete
-5. Open the Worker URL and log in with your `ADMIN_KEY`
-6. Go to Cloudflare Dashboard → Workers → db-keepalive → **Triggers** → Add **Cron Trigger**: `*/10 * * * *`
-7. Add your database connection strings — paste, test, and save
+1. Fork this repository on GitHub.
+2. Click the **Deploy to Cloudflare** button above.
+3. Authorize Cloudflare and enter your `ADMIN_KEY` when prompted.
+4. Wait for the deployment to finish.
+5. Open the Worker URL, log in with your `ADMIN_KEY`.
+6. Add a connection string — paste, test, save. The rest is automatic.
 
-No terminal, no git clone, no code to write.
-
-### Method 2: CLI Setup
+### Method 2 — CLI Setup
 
 ```bash
-# 1. Fork & clone
+# Fork & clone
 git clone https://github.com/your-username/db-keepalive-manager.git
 cd db-keepalive-manager
 npm install
 
-# 2. Run setup (interactive)
+# Interactive setup (login, KV, deploy)
 npm run setup
 ```
 
-This will log you in to Cloudflare, create a KV namespace, set your `ADMIN_KEY`, and deploy the Worker.
+## Usage
 
-## How It Works
+1. Open your Worker URL in a browser.
+2. Log in with the `ADMIN_KEY` you set during deployment.
+3. Paste a PostgreSQL connection string into the input field:
+   ```
+   postgresql://user:password@host:5432/database
+   ```
+4. Click **Test** — the Worker will attempt to connect and show the result.
+5. On success, the database is saved automatically and will be kept alive every 10 minutes.
+6. Monitor status at a glance: green = healthy, red = failing, gray = not yet checked.
 
-```
-Browser → Cloudflare Worker → KV (config) → PostgreSQL (SELECT 1)
-                ↓
-         Cron Trigger (every 10 min)
-```
+> To also get Telegram alerts and reports, configure the bot token and chat ID in the settings panel (click the gear icon).
 
-- The Worker serves a single-page web UI from its own code
-- Connection strings are encrypted with AES-256-GCM before being stored in KV
-- A Cron Trigger fires every 10 minutes, iterates all stored databases, and runs `SELECT 1` on each
-- Ping results (success/failure, timing, errors) are stored in KV and displayed in the UI
+## Telegram Notifications
 
-## Local Development
+Configure Telegram notifications from the settings panel inside the web UI:
 
-```bash
-# Create .dev.vars with your local admin key
-echo 'ADMIN_KEY=my-local-key' > .dev.vars
+| Setting | Description |
+|---------|-------------|
+| **Bot Token** | Token from [@BotFather](https://t.me/BotFather) |
+| **Chat ID** | Your chat ID (use [@userinfobot](https://t.me/userinfobot)) |
+| **Report Frequency** | `daily`, `weekly`, `monthly`, or `never` |
 
-# Start dev server
-npm run dev
-```
+Send `/status` to your bot to get the current status of all databases on demand.
 
 ## API Endpoints
 
@@ -72,13 +92,54 @@ npm run dev
 |--------|------|------|-------------|
 | GET | `/` | No | Web management UI |
 | POST | `/api/auth` | No | Login with ADMIN_KEY |
-| GET | `/api/databases` | Yes | List databases |
-| POST | `/api/databases/test` | Yes | Test a connection string |
+| GET | `/api/status` | Yes | Summary of all databases |
+| GET | `/api/badge` | Yes | Shields.io compatible badge SVG |
+| GET | `/api/databases` | Yes | List all databases |
 | POST | `/api/databases` | Yes | Add a database |
+| POST | `/api/databases/test` | Yes | Test a connection string |
+| POST | `/api/databases/detect` | Yes | Auto-detect provider from URL |
+| PUT | `/api/databases/:id` | Yes | Update database name |
 | DELETE | `/api/databases/:id` | Yes | Remove a database |
 | POST | `/api/ping` | Yes | Ping all databases now |
-| GET | `/api/logs` | Yes | Ping history |
+| POST | `/api/ping/:id` | Yes | Ping a single database |
+| GET | `/api/logs` | Yes | Recent ping history |
+| GET | `/api/export` | Yes | Export all data as JSON |
+| POST | `/api/import` | Yes | Import data from JSON |
+| GET | `/api/notifications/config` | Yes | Get notification settings |
+| POST | `/api/notifications/config` | Yes | Update notification settings |
+| POST | `/api/notifications/test` | Yes | Send a test Telegram message |
+
+## Architecture
+
+```
+┌──────────┐     ┌──────────────────┐     ┌───────────┐     ┌─────────────┐
+│  Browser  │────▶│  Cloudflare      │────▶│  Cloudflare│     │ PostgreSQL  │
+│  (Web UI) │     │  Worker          │     │  KV Store  │     │  (SELECT 1) │
+└──────────┘     └──────────┬───────┘     └───────────┘     └─────────────┘
+                            │
+                    ┌───────▼────────┐
+                    │  Cron Trigger  │
+                    │  (*/10 * * * *)│
+                    └────────────────┘
+```
+
+- **Worker** (`src/index.js`) — Serves the web UI, handles API requests, encrypts connection strings, performs pings, sends Telegram notifications.
+- **KV** (`DATABASE_KV`) — Stores encrypted connection strings, ping logs, and notification configuration.
+- **Cron Trigger** — Fires every 10 minutes to ping all databases in the background.
+- **postgres.js** — The only runtime dependency, used for lightweight PostgreSQL connections.
+
+## Local Development
+
+```bash
+# Create a .dev.vars file with your local admin key
+echo 'ADMIN_KEY=my-local-dev-key' > .dev.vars
+
+# Start the dev server with live reload
+npm run dev
+```
+
+The development server uses `wrangler dev` and provides the full web UI at `http://localhost:8787`.
 
 ## License
 
-MIT
+[MIT](LICENSE) — Free and open source forever.
