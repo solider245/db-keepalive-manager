@@ -313,6 +313,27 @@ export default {
       if (method === 'GET' && pathname === '/api/logs') {
         return Response.json(await getLogs(env));
       }
+
+      // Export all data
+      if (method === 'GET' && pathname === '/api/export') {
+        const dbs = await getDatabases(env);
+        const logs = await getLogs(env);
+        const safe = dbs.map(({ encryptedUrl, ...rest }) => rest);
+        return Response.json({ databases: safe, logs, exportedAt: Date.now() });
+      }
+
+      // Import data
+      if (method === 'POST' && pathname === '/api/import') {
+        const body = await request.json();
+        if (!body || !Array.isArray(body.databases)) {
+          return Response.json({ error: 'Invalid import format' }, { status: 400 });
+        }
+        await setDatabases(env, body.databases);
+        if (Array.isArray(body.logs)) {
+          await env.DATABASE_KV.put('logs', JSON.stringify(body.logs));
+        }
+        return Response.json({ ok: true, count: body.databases.length });
+      }
     } catch (err) {
       return Response.json({ error: err.message }, { status: 500 });
     }

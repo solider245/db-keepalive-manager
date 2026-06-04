@@ -94,6 +94,12 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
       <button onclick="logout()">退出</button>
     </div>
 
+    <!-- Fail Banner -->
+    <div id="fail-banner" style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 16px;margin-bottom:12px;font-size:13px;color:#dc2626;display:none">
+      <span id="fail-msg"></span>
+      <button onclick="this.parentElement.style.display='none'" style="float:right;background:none;border:none;cursor:pointer;color:#dc2626">✕</button>
+    </div>
+
     <!-- Provider Cards -->
     <div class="card">
       <h2>📦 免费 PostgreSQL 数据库</h2>
@@ -129,6 +135,8 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
     <div class="card">
       <div class="toolbar">
         <h2>💾 我的数据库 <span id="status-summary" class="badge"></span></h2>
+        <button class="btn btn-outline" onclick="exportData()" title="导出配置" style="font-size:11px;padding:3px 8px">📤</button>
+        <button class="btn btn-outline" onclick="importData()" title="导入配置" style="font-size:11px;padding:3px 8px">📥</button>
         <button class="btn btn-primary" onclick="pingAll()" id="ping-all-btn" style="font-size:12px;padding:5px 12px">⚡ 保活全部</button>
       </div>
       <table class="db-table">
@@ -143,7 +151,15 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
         </thead>
         <tbody id="db-tbody"></tbody>
       </table>
-      <div id="empty-state" class="hidden" style="text-align:center;padding:24px 0;color:#98a2b3;font-size:14px">暂无数据库，在上方粘贴连接串开始</div>
+      <div id="empty-state" class="hidden" style="text-align:center;padding:32px 0;color:#98a2b3">
+        <div style="font-size:48px;margin-bottom:12px">🗄️</div>
+        <div style="font-size:15px;font-weight:500;color:#667085;margin-bottom:8px">还没有添加数据库</div>
+        <div style="font-size:13px;line-height:1.8">
+          1. 从左侧 Provider 卡片获取免费数据库<br>
+          2. 粘贴连接串到底部输入框<br>
+          3. 点击"测试"自动保存并开始保活
+        </div>
+      </div>
     </div>
 
     <!-- Logs -->
@@ -151,6 +167,17 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
       <h2>📋 保活日志</h2>
       <div id="logs-wrapper" class="log-list">
         <div style="color:#98a2b3;font-size:13px;text-align:center;padding:12px 0">暂无日志</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Provider Modal -->
+  <div id="provider-modal" class="hidden" style="position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:200">
+    <div style="background:#fff;border-radius:12px;padding:24px;width:360px;max-width:90vw;box-shadow:0 8px 30px rgba(0,0,0,0.12)">
+      <h3 id="modal-title" style="font-size:16px;margin-bottom:12px"></h3>
+      <div id="modal-body" style="font-size:14px;line-height:1.8;color:#344054;white-space:pre-line"></div>
+      <div style="margin-top:16px;text-align:right">
+        <button class="btn btn-primary" onclick="closeModal()" style="font-size:13px;padding:6px 16px">知道了</button>
       </div>
     </div>
   </div>
@@ -172,10 +199,17 @@ function esc(s) { return String(s).replace(/[&<>"]/g, function(m) { return {'&':
 
 function truncate(s, n) { return s && s.length > n ? s.substring(0, n) + '...' : s; }
 
-function formatTime(ts) {
+function formatRelativeTime(ts) {
   if (!ts) return '-';
-  const d = new Date(ts);
-  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const diff = Date.now() - ts;
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return '刚刚';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return minutes + '分钟前';
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return hours + '小时前';
+  const days = Math.floor(hours / 24);
+  return days + '天前';
 }
 
 // Login
@@ -193,6 +227,10 @@ async function login() {
     document.getElementById('dashboard-view').classList.remove('hidden');
     refreshAll();
     setInterval(refreshAll, 30000);
+    setTimeout(() => {
+      const el = document.getElementById('new-url');
+      if (el) el.focus();
+    }, 500);
   } else {
     document.getElementById('login-error').textContent = '密钥错误，请重试';
     document.getElementById('login-error').style.display = 'block';
@@ -203,24 +241,55 @@ function logout() { sessionStorage.removeItem('adminKey'); adminKey = null; loca
 
 // Provider info
 function showProviderInfo(provider) {
-  const guide = {
-    supabase: '1.登录 supabase.com | 2.新建项目 | 3.Project Settings > Database > Connection string > 复制 URI',
-    neon: '1.登录 console.neon.tech | 2.新建项目 | 3.Dashboard > Connection Details > 复制连接串',
-    render: '1.登录 dashboard.render.com | 2.New PostgreSQL | 3.创建后复制 Internal Database URL',
-    aiven: '1.登录 console.aiven.io | 2.创建服务 > PostgreSQL | 3.Connection Info > 复制 URI'
+  const guides = {
+    supabase: { title: 'Supabase 免费版', body: '额度: 500MB PostgreSQL\\n自动暂停: 7 天无活动\\n\\n获取连接串:\\n1. 登录 supabase.com\\n2. 新建项目\\n3. Project Settings → Database → Connection string → 复制 URI', link: 'https://supabase.com' },
+    neon: { title: 'Neon 免费版', body: '额度: 500MB PostgreSQL\\n自动暂停: 1 小时无活动\\n\\n获取连接串:\\n1. 登录 console.neon.tech\\n2. 新建项目\\n3. Dashboard → Connection Details → 复制', link: 'https://console.neon.tech' },
+    render: { title: 'Render 免费版', body: '额度: 1GB PostgreSQL\\n自动暂停: 15 分钟无活动\\n\\n获取连接串:\\n1. 登录 dashboard.render.com\\n2. New PostgreSQL\\n3. 创建后复制 Internal Database URL', link: 'https://dashboard.render.com' },
+    aiven: { title: 'Aiven 免费版', body: '额度: 5GB PostgreSQL\\n自动暂停: 无(始终运行)\\n\\n获取连接串:\\n1. 登录 console.aiven.io\\n2. 创建服务 → PostgreSQL\\n3. Connection Info → 复制 URI', link: 'https://console.aiven.io' }
   };
-  const links = { supabase: 'https://supabase.com', neon: 'https://console.neon.tech', render: 'https://dashboard.render.com', aiven: 'https://console.aiven.io' };
-  alert(guide[provider] || '');
-  window.open(links[provider], '_blank');
+  const info = guides[provider];
+  if (!info) return;
+  document.getElementById('modal-title').textContent = info.title;
+  document.getElementById('modal-body').textContent = info.body;
+  document.getElementById('provider-modal').classList.remove('hidden');
+  document.getElementById('provider-modal').style.display = 'flex';
+  window.open(info.link, '_blank');
+}
+
+function closeModal() {
+  document.getElementById('provider-modal').classList.add('hidden');
+  document.getElementById('provider-modal').style.display = 'none';
 }
 
 // Refresh all data
-async function refreshAll() { await Promise.all([loadDatabases(), loadLogs()]); }
+async function refreshAll() {
+  const dbs = await api('/api/databases');
+  if (!dbs) return;
+  const failed = dbs.filter(d => d.lastSuccess === false);
+  const banner = document.getElementById('fail-banner');
+  if (failed.length > 0) {
+    banner.style.display = 'block';
+    document.getElementById('fail-msg').textContent = '⚠️ ' + failed.length + ' 个数据库保活异常';
+  } else {
+    banner.style.display = 'none';
+  }
+  await loadDatabases();
+  await loadLogs();
+}
 
 // Load databases
 async function loadDatabases() {
   const dbs = await api('/api/databases');
   if (!dbs) return;
+  // Sort: failed first, then never-pinged, then healthy
+  dbs.sort((a, b) => {
+    const getPriority = (db) => {
+      if (db.lastSuccess === false) return 0;
+      if (db.lastSuccess === null) return 1;
+      return 2;
+    };
+    return getPriority(a) - getPriority(b);
+  });
   const tbody = document.getElementById('db-tbody');
   const empty = document.getElementById('empty-state');
 
@@ -238,6 +307,7 @@ async function loadDatabases() {
       '<td>' +
         '<button class="btn-icon" onclick="pingOne(\\'' + db.id + '\\')" title="保活">⚡</button>' +
         (db.consoleUrl ? '<button class="btn-icon" onclick="window.open(\\'' + esc(db.consoleUrl) + '\\',\\'_blank\\')" title="打开后台">🔗</button>' : '') +
+        '<button class="btn-icon" onclick="copyUrl(\\'' + esc(db.displayUrl || '') + '\\')" title="复制连接串">📋</button>' +
         '<button class="btn-icon danger" onclick="deleteDb(\\'' + db.id + '\\')" title="删除">✕</button>' +
       '</td></tr>';
   }
@@ -254,6 +324,7 @@ async function loadDatabases() {
   tbody.innerHTML = html;
   empty.classList.toggle('hidden', dbs.length > 0);
   document.getElementById('status-summary').textContent = '(' + ok + '/' + dbs.length + ' 正常)';
+  document.title = 'DB Keep-Alive (' + ok + '/' + dbs.length + ')';
 }
 
 // Paste detection
@@ -290,6 +361,7 @@ async function testNew() {
     document.getElementById('new-type').textContent = '-';
     status.innerHTML = '';
     await loadDatabases();
+    document.getElementById('new-url').focus();
   } else {
     status.innerHTML = '<span style="color:#dc2626">❌ ' + esc(res?.error || '连接失败') + '</span>';
   }
@@ -318,6 +390,52 @@ async function deleteDb(id) {
   await loadDatabases();
 }
 
+// Export
+async function exportData() {
+  const data = await api('/api/export');
+  if (!data) return;
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'db-keepalive-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// Import
+async function importData() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = async () => {
+    try {
+      const text = await input.files[0].text();
+      const data = JSON.parse(text);
+      const res = await api('/api/import', { method: 'POST', body: text });
+      if (res && res.ok) {
+        alert('导入成功：' + res.count + ' 个数据库');
+        refreshAll();
+      }
+    } catch(e) {
+      alert('导入失败：' + e.message);
+    }
+  };
+  input.click();
+}
+
+// Copy URL
+function copyUrl(url) {
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = event.target;
+    const orig = btn.textContent;
+    btn.textContent = '✅';
+    setTimeout(() => btn.textContent = orig, 1000);
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = url; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
+  });
+}
+
 // Load logs
 async function loadLogs() {
   const logs = await api('/api/logs');
@@ -326,7 +444,7 @@ async function loadLogs() {
   if (logs.length === 0) { wrapper.innerHTML = '<div style="color:#98a2b3;text-align:center;padding:12px 0">暂无日志</div>'; return; }
   wrapper.innerHTML = logs.map(log =>
     '<div class="log-entry">' +
-    '<span class="log-time">' + formatTime(log.timestamp) + '</span>' +
+    '<span class="log-time">' + formatRelativeTime(log.timestamp) + '</span>' +
     '<span class="log-db">' + esc(log.dbName) + '</span>' +
     '<span class="log-msg ' + (log.success ? 'status-ok' : 'status-fail') + '">' +
     (log.success ? '✅ 成功' : '❌ ' + esc(log.error || '失败')) +
@@ -337,6 +455,7 @@ async function loadLogs() {
 // Init
 document.getElementById('login-key').addEventListener('keydown', function(e) { if (e.key === 'Enter') login(); });
 if (adminKey) {
+  document.title = 'DB Keep-Alive Manager';
   document.getElementById('login-view').classList.add('hidden');
   document.getElementById('dashboard-view').classList.remove('hidden');
   refreshAll();
