@@ -133,7 +133,6 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
           <div class="name">Supabase</div>
           <div class="quota">500MB · PostgreSQL</div>
           <div class="tag">免费</div>
-          <div style="font-size:10px;color:#dc2626;margin-top:2px">需 anon key</div>
           <div class="get-link">获取连接串 →</div>
         </div>
         <div class="provider-card" onclick="showProviderInfo('neon')">
@@ -186,7 +185,7 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
           1. 从上方 Provider 卡片获取免费数据库<br>
           2. 粘贴连接串到底部输入框<br>
           3. 点击"测试"自动保存并开始保活<br>
-          <span style="color:#98a2b3">💡 本工具通过写入数据库 _keepalive 表实现保活</span>
+          <span style="color:#98a2b3">💡 每10分钟自动保活，无需手动干预</span>
         </div>
       </div>
     </div>
@@ -303,7 +302,7 @@ function logout() { sessionStorage.removeItem('adminKey'); adminKey = null; loca
 // Provider info
 function showProviderInfo(provider) {
   const guides = {
-    supabase: { title: 'Supabase 免费版', body: '额度: 500MB PostgreSQL\\n自动暂停: 7 天无活动\\n\\n获取连接串:\\n1. 登录 supabase.com\\n2. 新建项目\\n3. Project Settings → Database → Connection string → 复制 URI\\n\\n首次使用需建表(一次):\\n在 SQL Editor 运行:\\nCREATE TABLE IF NOT EXISTS public._keepalive (\\n  id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\\n  ts TIMESTAMPTZ DEFAULT NOW()\\n);\\nALTER TABLE public._keepalive ENABLE ROW LEVEL SECURITY;\\nCREATE POLICY \\"keepalive_all\\" ON public._keepalive\\n  FOR ALL TO anon USING (true) WITH CHECK (true);\\n\\n获取 Anon Key:\\nProject Settings → API → anon public → 复制', link: 'https://supabase.com' },
+    supabase: { title: 'Supabase 免费版', body: '额度: 500MB PostgreSQL\\n自动暂停: 7 天无活动\\n\\n获取连接串:\\n1. 登录 supabase.com\\n2. 新建项目\\n3. Project Settings → Database → Connection string → 复制 URI\\n\\n连接端口:\\n- 5432: 直连\\n- 6543: PgBouncer 事务池\\n\\n获取 anon key:\\nProject Settings → API → anon public → 复制', link: 'https://supabase.com' },
     neon: { title: 'Neon 免费版', body: '额度: 500MB PostgreSQL\\n自动暂停: 1 小时无活动\\n\\n获取连接串:\\n1. 登录 console.neon.tech\\n2. 新建项目\\n3. Dashboard → Connection Details → 复制', link: 'https://console.neon.tech' },
     render: { title: 'Render 免费版', body: '额度: 1GB PostgreSQL\\n自动暂停: 15 分钟无活动\\n\\n获取连接串:\\n1. 登录 dashboard.render.com\\n2. New PostgreSQL\\n3. 创建后复制 Internal Database URL', link: 'https://dashboard.render.com' },
     aiven: { title: 'Aiven 免费版', body: '额度: 5GB PostgreSQL\\n自动暂停: 无(始终运行)\\n\\n获取连接串:\\n1. 登录 console.aiven.io\\n2. 创建服务 → PostgreSQL\\n3. Connection Info → 复制 URI', link: 'https://console.aiven.io' }
@@ -364,7 +363,7 @@ async function loadDatabases() {
     html += '<tr>' +
       '<td class="url-cell" title="' + esc(db.displayUrl || '') + '">' + esc(truncate(db.displayUrl || '', 55)) + '</td>' +
       '<td ondblclick="editName(\\'' + db.id + '\\',this)" title="双击编辑">' + esc(db.name) + '</td>' +
-      '<td>' + esc(db.type || 'postgres') + '</td>' +
+      '<td>' + esc(db.type || 'postgres') + (db.anonKey ? '<br><span style="font-size:10px;color:#6366f1">🔑已配置</span>' : '') + '</td>' +
       '<td class="' + cls + '"><span class="status-dot"></span>' + txt + '</td>' +
       '<td>' +
         '<button class="btn-icon" onclick="pingOne(\\'' + db.id + '\\')" title="保活">⚡</button>' +
@@ -381,7 +380,7 @@ async function loadDatabases() {
     '<td><span id="new-name" style="color:#98a2b3;font-size:12px">' + esc(document.getElementById('new-name')?.textContent || '自动识别') + '</span></td>' +
     '<td><span id="new-type" style="font-size:12px">' + esc(document.getElementById('new-type')?.textContent || '-') + '</span></td>' +
     '<td><span id="new-status"></span></td>' +
-    '<td><input type="text" id="new-anonkey" placeholder="anon key（Supabase需要）" style="display:none;font-size:11px;padding:3px 6px;width:100%">' +
+    '<input type="text" id="new-anonkey" placeholder="anon key（Supabase需要）" style="display:none;font-size:11px;padding:2px 6px;width:100%;margin-bottom:2px;border:1px solid #d0d5dd;border-radius:4px">' +
     '<button class="btn btn-outline" onclick="testNew()" id="test-new-btn" style="font-size:12px;padding:3px 8px">测试</button></td>' +
     '</tr>';
 
@@ -419,17 +418,13 @@ async function onPasteUrl(url) {
         const typeMap = { 'supabase-http': 'Supabase', postgres: 'PG', redis: 'Redis', neon: 'Neon' };
         const typeLabel = typeMap[info.type] || info.type || 'PG';
         document.getElementById('new-type').textContent = typeLabel;
-
-        // Show anon key input for Supabase, hide for others
+        // Show anon key input only for Supabase
         const anonInput = document.getElementById('new-anonkey');
         if (anonInput) {
           anonInput.style.display = info.type === 'supabase-http' ? '' : 'none';
-          if (info.type === 'supabase-http') anonInput.placeholder = 'anon key（从Supabase Dashboard复制）';
         }
-      }
-    } catch(e) {}
-  }, 400);
-}
+
+        
 
 // Test and auto-save
 async function testNew() {
@@ -444,9 +439,9 @@ async function testNew() {
     // Auto-save after success
     const name = document.getElementById('new-name').textContent === '自动识别' ? url.match(/@([^:]+)/)?.[1] || 'db' : document.getElementById('new-name').textContent;
     const anonKey = document.getElementById('new-anonkey')?.value?.trim() || undefined;
-    const body = { name, url };
-    if (anonKey) body.anonKey = anonKey;
-    await api('/api/databases', { method: 'POST', body: JSON.stringify(body) });
+        const body = { name, url };
+        if (anonKey) body.anonKey = anonKey;
+        await api('/api/databases', { method: 'POST', body: JSON.stringify(body) });
     document.getElementById('new-url').value = '';
     document.getElementById('new-name').textContent = '自动识别';
     document.getElementById('new-type').textContent = '-';

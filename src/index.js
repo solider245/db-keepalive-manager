@@ -109,8 +109,13 @@ async function sendNotification(env, type, data) {
 // ============ Pinger ============
 
 function detectDbType(url) {
-  const host = new URL(url).hostname;
-  if (host.includes('supabase.co') || host.includes('pooler.supabase.com')) return 'supabase-http';
+  try {
+    const u = new URL(url);
+    const host = u.hostname;
+    const port = u.port || '5432';
+    // Only pooler port 6543 has TLS issues in workerd
+    if ((host.includes('supabase.co') || host.includes('pooler.supabase.com')) && port === '6543') return 'supabase-http';
+  } catch {}
   return 'postgres';
 }
 
@@ -196,32 +201,16 @@ async function pingPostgres(url) {
     connection: { application_name: 'db-keepalive' },
   });
   try {
-    // Create table if not exists (first time)
-    await sql`CREATE TABLE IF NOT EXISTS _keepalive (
-      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-      ts TIMESTAMPTZ DEFAULT NOW()
-    )`.catch(() => {}); // Ignore errors if table already exists
-
-    // Insert timestamp to keep alive AND leave trace
     await Promise.race([
-      sql`INSERT INTO _keepalive (ts) VALUES (NOW())`,
+      sql`SELECT 1`,
       new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout after 10s')), 10000)),
     ]);
-
-    // Cleanup old records (older than 7 days)
-    sql`DELETE FROM _keepalive WHERE ts < NOW() - INTERVAL '7 days'`.catch(() => {});
-
     return { success: true, durationMs: Date.now() - start };
   } catch (err) {
     // Retry once after 3 seconds
     await new Promise(r => setTimeout(r, 3000));
     try {
-      await sql`CREATE TABLE IF NOT EXISTS _keepalive (
-        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-        ts TIMESTAMPTZ DEFAULT NOW()
-      )`.catch(() => {});
-      await sql`INSERT INTO _keepalive (ts) VALUES (NOW())`;
-      sql`DELETE FROM _keepalive WHERE ts < NOW() - INTERVAL '7 days'`.catch(() => {});
+      await sql`SELECT 1`;
       return { success: true, durationMs: Date.now() - start, retried: true };
     } catch (err2) {
       let msg = err2.message;
@@ -241,42 +230,27 @@ async function pingPostgres(url) {
 async function pingSupabase(projectRef, anonKey) {
   const start = Date.now();
   if (!anonKey) {
-    // Fallback: just HEAD to project URL (wakes DB but not a real connection)
+    // Fallback: HEAD request (wakes DB but no real connection)
     try {
       await fetch(`https://${projectRef}.supabase.co/`, {
         method: 'HEAD', signal: AbortSignal.timeout(15000),
       });
-      return { success: true, durationMs: Date.now() - start, note: 'wake (no anon key)' };
+      return { success: true, durationMs: Date.now() - start, note: 'wake (no key)' };
     } catch (err) {
       return { success: false, error: err.message, durationMs: Date.now() - start };
     }
   }
-
-  // Real keep-alive: POST to REST API (goes through PostgREST, creates DB connection)
+  // Real keep-alive: GET /rest/v1/ triggers PostgREST → PG connection
   try {
-    const res = await fetch(`https://${projectRef}.supabase.co/rest/v1/_keepalive`, {
-      method: 'POST',
+    const res = await fetch(`https://${projectRef}.supabase.co/rest/v1/`, {
       headers: {
-        'Content-Type': 'application/json',
         'apikey': anonKey,
         'Authorization': 'Bearer ' + anonKey,
-        'Prefer': 'return=minimal',
       },
-      body: JSON.stringify({}),
       signal: AbortSignal.timeout(15000),
     });
-    if (res.ok || res.status === 201 || res.status === 200) {
-      return { success: true, durationMs: Date.now() - start, note: 'HTTP ' + res.status };
-    }
-    // 401 = anon key wrong, 404 = table not created yet
-    const note = res.status === 401 ? 'anon key 无效'
-      : res.status === 404 ? '请先在 Supabase SQL Editor 建表 _keepalive'
-      : 'HTTP ' + res.status;
-    return { success: false, error: note, durationMs: Date.now() - start };
+    return { success: true, durationMs: Date.now() - start, note: 'REST ' + res.status };
   } catch (err) {
-    if (err.message.includes('Timeout')) {
-      return { success: false, error: '连接超时', durationMs: Date.now() - start };
-    }
     return { success: false, error: err.message, durationMs: Date.now() - start };
   }
 }
@@ -424,7 +398,9 @@ export default {
       // List databases
       if (method === 'GET' && pathname === '/api/databases') {
         const dbs = await getDatabases(env);
-        const safe = dbs.map(({ encryptedUrl, ...rest }) => rest);
+        const safe = dbs.map(({ encryptedUrl, anonKey, ...rest }) => {
+          return { ...rest, anonKey: anonKey ? '✓' : null };
+        });
         return Response.json(safe);
       }
 
