@@ -203,14 +203,14 @@ function logout() { sessionStorage.removeItem('adminKey'); adminKey = null; loca
 
 // Provider info
 function showProviderInfo(provider) {
-  const tips = {
-    supabase: '1. 登录 supabase.com\n2. 新建项目\n3. Project Settings → Database → Connection string → 复制 URI\n4. 项目自动暂停: 7 天无活动',
-    neon: '1. 登录 console.neon.tech\n2. 新建项目\n3. Dashboard → Connection Details → 复制连接串\n4. 自动暂停: 1 小时无活动',
-    render: '1. 登录 dashboard.render.com\n2. New PostgreSQL\n3. 创建后复制 Internal Database URL\n4. 自动暂停: 15 分钟无活动',
-    aiven: '1. 登录 console.aiven.io\n2. 创建服务 → PostgreSQL\n3. 服务页面 → Connection Info → 复制 URI\n4. 自动暂停: 无 (始终运行)'
+  const guide = {
+    supabase: '1.登录 supabase.com | 2.新建项目 | 3.Project Settings > Database > Connection string > 复制 URI',
+    neon: '1.登录 console.neon.tech | 2.新建项目 | 3.Dashboard > Connection Details > 复制连接串',
+    render: '1.登录 dashboard.render.com | 2.New PostgreSQL | 3.创建后复制 Internal Database URL',
+    aiven: '1.登录 console.aiven.io | 2.创建服务 > PostgreSQL | 3.Connection Info > 复制 URI'
   };
   const links = { supabase: 'https://supabase.com', neon: 'https://console.neon.tech', render: 'https://dashboard.render.com', aiven: 'https://console.aiven.io' };
-  alert(tips[provider] || '');
+  alert(guide[provider] || '');
   window.open(links[provider], '_blank');
 }
 
