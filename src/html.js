@@ -138,6 +138,7 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
         <button class="btn btn-outline" onclick="exportData()" title="导出配置" style="font-size:11px;padding:3px 8px">📤</button>
         <button class="btn btn-outline" onclick="importData()" title="导入配置" style="font-size:11px;padding:3px 8px">📥</button>
         <button class="btn btn-primary" onclick="pingAll()" id="ping-all-btn" style="font-size:12px;padding:5px 12px">⚡ 保活全部</button>
+        <button class="btn btn-outline" onclick="toggleBatch()" style="font-size:12px;padding:3px 8px" title="批量导入">📋</button>
       </div>
       <table class="db-table">
         <thead>
@@ -301,7 +302,7 @@ async function loadDatabases() {
     const txt = db.lastSuccess === null ? '未保活' : db.lastSuccess ? '正常' : '失败';
     html += '<tr>' +
       '<td class="url-cell" title="' + esc(db.displayUrl || '') + '">' + esc(truncate(db.displayUrl || '', 55)) + '</td>' +
-      '<td>' + esc(db.name) + '</td>' +
+      '<td ondblclick="editName(\\'' + db.id + '\\',this)" title="双击编辑">' + esc(db.name) + '</td>' +
       '<td>' + esc(db.type || 'postgres') + '</td>' +
       '<td class="' + cls + '"><span class="status-dot"></span>' + txt + '</td>' +
       '<td>' +
@@ -321,6 +322,12 @@ async function loadDatabases() {
     '<td><button class="btn btn-outline" onclick="testNew()" id="test-new-btn" style="font-size:12px;padding:3px 8px">测试</button></td>' +
     '</tr>';
 
+  // Batch paste toggle
+  html += '<tr id="batch-row" style="display:none">' +
+    '<td colspan="5"><textarea id="batch-input" rows="3" placeholder="每行一个连接串，批量导入..." style="width:100%;padding:6px;border:1px solid #d0d5dd;border-radius:5px;font-family:monospace;font-size:12px"></textarea>' +
+    '<button class="btn btn-outline" onclick="batchImport()" style="font-size:12px;margin-top:4px">批量测试并保存</button>' +
+    '</td></tr>';
+
   tbody.innerHTML = html;
   empty.classList.toggle('hidden', dbs.length > 0);
   document.getElementById('status-summary').textContent = '(' + ok + '/' + dbs.length + ' 正常)';
@@ -331,13 +338,20 @@ async function loadDatabases() {
 let detectTimer = null;
 async function onPasteUrl(url) {
   clearTimeout(detectTimer);
-  if (!url || url.length < 15) return;
+  if (!url || url.length < 10) return;
+  // Basic URL format check
+  if (!url.startsWith('postgresql://') && !url.startsWith('postgres://') && !url.startsWith('redis://')) {
+    document.getElementById('new-type').textContent = '格式?';
+    return;
+  }
+  document.getElementById('new-type').textContent = '检测中...';
   detectTimer = setTimeout(async () => {
     try {
       const info = await api('/api/databases/detect', { method: 'POST', body: JSON.stringify({ url }) });
       if (info && info.detectedName) {
         document.getElementById('new-name').textContent = info.detectedName;
-        document.getElementById('new-type').textContent = info.type === 'supabase-http' ? 'Supabase' : 'PG';
+        const typeMap = { 'supabase-http': 'Supabase', postgres: 'PG', redis: 'Redis', 'neon': 'Neon' };
+        document.getElementById('new-type').textContent = typeMap[info.type] || info.type || 'PG';
       }
     } catch(e) {}
   }, 400);
@@ -448,8 +462,74 @@ async function loadLogs() {
     '<span class="log-db">' + esc(log.dbName) + '</span>' +
     '<span class="log-msg ' + (log.success ? 'status-ok' : 'status-fail') + '">' +
     (log.success ? '✅ 成功' : '❌ ' + esc(log.error || '失败')) +
+    (log.durationMs ? ' (' + log.durationMs + 'ms)' : '') +
     '</span></div>'
   ).join('');
+}
+
+function toggleBatch() {
+  const row = document.getElementById('batch-row');
+  if (row.style.display === 'none') {
+    row.style.display = 'table-row';
+    document.getElementById('batch-input').focus();
+  } else {
+    row.style.display = 'none';
+  }
+}
+
+async function batchImport() {
+  const text = document.getElementById('batch-input').value.trim();
+  if (!text) return;
+  const urls = text.split('\\n').map(s => s.trim()).filter(s => s.length > 10);
+  if (urls.length === 0) return;
+  const btn = document.querySelector('#batch-row button');
+  btn.disabled = true; btn.textContent = '导入中 0/' + urls.length + '...';
+  let ok = 0;
+  for (let i = 0; i < urls.length; i++) {
+    btn.textContent = '导入中 ' + (i+1) + '/' + urls.length + '...';
+    try {
+      const testRes = await api('/api/databases/test', { method: 'POST', body: JSON.stringify({ url: urls[i] }) });
+      if (testRes && testRes.success) {
+        const name = urls[i].match(/@([^:./]+)/)?.[1] || 'db' + (i+1);
+        await api('/api/databases', { method: 'POST', body: JSON.stringify({ name, url: urls[i] }) });
+        ok++;
+      }
+    } catch(e) {}
+  }
+  btn.disabled = false; btn.textContent = '批量测试并保存';
+  document.getElementById('batch-input').value = '';
+  document.getElementById('batch-row').style.display = 'none';
+  alert('导入完成: ' + ok + '/' + urls.length + ' 成功');
+  await loadDatabases();
+}
+
+async function editName(id, td) {
+  const current = td.textContent;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = current;
+  input.style.width = '100%';
+  input.style.padding = '2px 6px';
+  td.textContent = '';
+  td.appendChild(input);
+  input.focus();
+  input.select();
+
+  const save = async () => {
+    const val = input.value.trim();
+    if (val && val !== current) {
+      await api('/api/databases/' + id, { method: 'PUT', body: JSON.stringify({ name: val }) });
+      await loadDatabases();
+    } else {
+      td.textContent = current;
+    }
+  };
+
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); await save(); }
+    if (e.key === 'Escape') { td.textContent = current; }
+  });
 }
 
 // Init
