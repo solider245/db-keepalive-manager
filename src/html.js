@@ -231,7 +231,7 @@ async function loadDatabases() {
     const cls = db.lastSuccess === null ? 'status-none' : db.lastSuccess ? 'status-ok' : 'status-fail';
     const txt = db.lastSuccess === null ? '未保活' : db.lastSuccess ? '正常' : '失败';
     html += '<tr>' +
-      '<td class="url-cell" title="' + esc(db.encryptedUrl || '') + '">' + esc(truncate(db.encryptedUrl || '', 55)) + '</td>' +
+      '<td class="url-cell" title="' + esc(db.displayUrl || '') + '">' + esc(truncate(db.displayUrl || '', 55)) + '</td>' +
       '<td>' + esc(db.name) + '</td>' +
       '<td>' + esc(db.type || 'postgres') + '</td>' +
       '<td class="' + cls + '"><span class="status-dot"></span>' + txt + '</td>' +

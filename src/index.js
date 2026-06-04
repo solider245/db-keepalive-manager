@@ -102,6 +102,18 @@ function detectDatabase(url) {
   return { type, projectRef, detectedName, consoleUrl };
 }
 
+function maskUrl(url) {
+  try {
+    const u = new URL(url);
+    const host = u.hostname;
+    const db = u.pathname === '/' ? '' : u.pathname;
+    const params = u.search || '';
+    return u.protocol + '//' + host + (u.port ? ':' + u.port : '') + db + params;
+  } catch {
+    return url.substring(0, 50);
+  }
+}
+
 async function pingPostgres(url) {
   const start = Date.now();
   const sql = postgres(url, {
@@ -228,6 +240,7 @@ export default {
           name,
           type: detectDbType(dbUrl),
           encryptedUrl,
+          displayUrl: maskUrl(dbUrl),
           consoleUrl: info.consoleUrl,
           createdAt: Date.now(),
           lastPingAt: null,
