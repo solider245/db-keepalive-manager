@@ -10,5 +10,8 @@
       "id": "b1004d9a0b8443fda2c3c1e4f0a699c1",
       "preview_id": "b1004d9a0b8443fda2c3c1e4f0a699c1"
     }
-  ]
+  ],
+  "triggers": {
+    "crons": ["*/10 * * * *"]
+  }
 }
