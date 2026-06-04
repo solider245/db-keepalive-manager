@@ -196,22 +196,37 @@ async function pingPostgres(url) {
     connection: { application_name: 'db-keepalive' },
   });
   try {
+    // Create table if not exists (first time)
+    await sql`CREATE TABLE IF NOT EXISTS _keepalive (
+      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      ts TIMESTAMPTZ DEFAULT NOW()
+    )`.catch(() => {}); // Ignore errors if table already exists
+
+    // Insert timestamp to keep alive AND leave trace
     await Promise.race([
-      sql`SELECT 1`,
+      sql`INSERT INTO _keepalive (ts) VALUES (NOW())`,
       new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout after 10s')), 10000)),
     ]);
+
+    // Cleanup old records (older than 7 days)
+    sql`DELETE FROM _keepalive WHERE ts < NOW() - INTERVAL '7 days'`.catch(() => {});
+
     return { success: true, durationMs: Date.now() - start };
   } catch (err) {
     // Retry once after 3 seconds
     await new Promise(r => setTimeout(r, 3000));
     try {
-      await sql`SELECT 1`;
+      await sql`CREATE TABLE IF NOT EXISTS _keepalive (
+        id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        ts TIMESTAMPTZ DEFAULT NOW()
+      )`.catch(() => {});
+      await sql`INSERT INTO _keepalive (ts) VALUES (NOW())`;
+      sql`DELETE FROM _keepalive WHERE ts < NOW() - INTERVAL '7 days'`.catch(() => {});
       return { success: true, durationMs: Date.now() - start, retried: true };
     } catch (err2) {
-      // Normalize common error messages
       let msg = err2.message;
       if (msg.includes('connect') || msg.includes('refused') || msg.includes('ECONN'))
-        msg = '无法连接到数据库服务器，请检查连接串和网络';
+        msg = '无法连接到数据库，请检查连接串和网络';
       else if (msg.includes('auth') || msg.includes('password') || msg.includes('login'))
         msg = '认证失败，请检查用户名和密码';
       else if (msg.includes('timeout') || msg.includes('Timeout'))
@@ -223,25 +238,55 @@ async function pingPostgres(url) {
   }
 }
 
-async function pingSupabase(projectRef) {
+async function pingSupabase(projectRef, anonKey) {
   const start = Date.now();
+  if (!anonKey) {
+    // Fallback: just HEAD to project URL (wakes DB but not a real connection)
+    try {
+      await fetch(`https://${projectRef}.supabase.co/`, {
+        method: 'HEAD', signal: AbortSignal.timeout(15000),
+      });
+      return { success: true, durationMs: Date.now() - start, note: 'wake (no anon key)' };
+    } catch (err) {
+      return { success: false, error: err.message, durationMs: Date.now() - start };
+    }
+  }
+
+  // Real keep-alive: POST to REST API (goes through PostgREST, creates DB connection)
   try {
-    const res = await fetch(`https://${projectRef}.supabase.co/`, {
-      method: 'HEAD',
+    const res = await fetch(`https://${projectRef}.supabase.co/rest/v1/_keepalive`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': anonKey,
+        'Authorization': 'Bearer ' + anonKey,
+        'Prefer': 'return=minimal',
+      },
+      body: JSON.stringify({}),
       signal: AbortSignal.timeout(15000),
     });
-    return { success: true, durationMs: Date.now() - start, note: `HTTP ${res.status}` };
+    if (res.ok || res.status === 201 || res.status === 200) {
+      return { success: true, durationMs: Date.now() - start, note: 'HTTP ' + res.status };
+    }
+    // 401 = anon key wrong, 404 = table not created yet
+    const note = res.status === 401 ? 'anon key 无效'
+      : res.status === 404 ? '请先在 Supabase SQL Editor 建表 _keepalive'
+      : 'HTTP ' + res.status;
+    return { success: false, error: note, durationMs: Date.now() - start };
   } catch (err) {
+    if (err.message.includes('Timeout')) {
+      return { success: false, error: '连接超时', durationMs: Date.now() - start };
+    }
     return { success: false, error: err.message, durationMs: Date.now() - start };
   }
 }
 
-async function pingDatabase(url) {
+async function pingDatabase(url, anonKey) {
   const type = detectDbType(url);
   if (type === 'supabase-http') {
     const ref = getSupabaseProjectRef(url);
     if (!ref) return { success: false, error: 'Cannot detect Supabase project ref from URL' };
-    return pingSupabase(ref);
+    return pingSupabase(ref, anonKey);
   }
   return pingPostgres(url);
 }
@@ -387,7 +432,7 @@ export default {
       if (method === 'POST' && pathname === '/api/databases/test') {
         const { url: dbUrl } = await request.json();
         if (!dbUrl) return Response.json({ error: 'URL is required' }, { status: 400 });
-        const result = await pingDatabase(dbUrl);
+        const result = await pingDatabase(dbUrl, undefined);
         return Response.json(result);
       }
 
@@ -443,7 +488,7 @@ export default {
 
       // Add database
       if (method === 'POST' && pathname === '/api/databases') {
-        const { name, url: dbUrl } = await request.json();
+        const { name, url: dbUrl, anonKey } = await request.json();
         if (!name || !dbUrl) {
           return Response.json({ error: 'Name and URL are required' }, { status: 400 });
         }
@@ -456,6 +501,7 @@ export default {
           encryptedUrl,
           displayUrl: maskUrl(dbUrl),
           consoleUrl: info.consoleUrl,
+          anonKey: anonKey || null,
           createdAt: Date.now(),
           lastPingAt: null,
           lastSuccess: null,
@@ -487,7 +533,7 @@ export default {
               continue;
             }
             const dbUrl = await decrypt(db.encryptedUrl, env.ADMIN_KEY);
-            const result = await pingDatabase(dbUrl);
+            const result = await pingDatabase(dbUrl, db.anonKey);
             db.lastPingAt = Date.now();
             db.lastSuccess = result.success;
             db.lastError = result.error || null;
@@ -519,7 +565,7 @@ export default {
         const db = dbs.find(d => d.id === id);
         if (!db) return Response.json({ error: 'Not found' }, { status: 404 });
         const dbUrl = await decrypt(db.encryptedUrl, env.ADMIN_KEY);
-        const result = await pingDatabase(dbUrl);
+        const result = await pingDatabase(dbUrl, db.anonKey);
         db.lastPingAt = Date.now();
         db.lastSuccess = result.success;
         db.lastError = result.error || null;
@@ -573,7 +619,7 @@ export default {
       }
       try {
         const dbUrl = await decrypt(db.encryptedUrl, env.ADMIN_KEY);
-        const result = await pingDatabase(dbUrl);
+        const result = await pingDatabase(dbUrl, db.anonKey);
         db.lastPingAt = Date.now();
         db.lastSuccess = result.success;
         db.lastError = result.error || null;
