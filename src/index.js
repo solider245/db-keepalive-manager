@@ -269,7 +269,7 @@ async function loadDatabases() {
         '<td>' + esc(db.type || 'postgres') + '</td>' +
         '<td>' + formatTime(db.lastPingAt) + '</td>' +
         '<td class="' + statusClass + '">' + statusText + '</td>' +
-        '<td><button class="btn btn-danger" onclick="deleteDatabase(\'' + db.id + '\')">删除</button></td>' +
+        '<td><button class="btn btn-danger" onclick="deleteDatabase(\\'' + db.id + '\\')">删除</button></td>' +
         '</tr>';
     }).join('') + '</tbody></table>';
 }
