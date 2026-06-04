@@ -11,9 +11,6 @@
       "preview_id": "KV_ID_PLACEHOLDER"
     }
   ],
-  "triggers": {
-    "crons": ["*/10 * * * *"]
-  },
   "vars": {
     "ADMIN_KEY": ""
   }

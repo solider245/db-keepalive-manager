@@ -24,7 +24,8 @@ Prevents serverless PostgreSQL databases (Supabase, Neon, Render, etc.) from goi
 3. Authorize Cloudflare and enter your `ADMIN_KEY` when prompted
 4. Wait for deployment to complete
 5. Open the Worker URL and log in with your `ADMIN_KEY`
-6. Add your database connection strings — paste, test, and save
+6. Go to Cloudflare Dashboard → Workers → db-keepalive → **Triggers** → Add **Cron Trigger**: `*/10 * * * *`
+7. Add your database connection strings — paste, test, and save
 
 No terminal, no git clone, no code to write.
 
