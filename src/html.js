@@ -86,6 +86,7 @@ tr.divider td { border-bottom: 2px solid #eaecf0; padding: 0; height: 0; }
 
   <!-- Dashboard -->
   <div id="dashboard-view" class="hidden">
+    <div id="debug-bar" style="display:none;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:13px;color:#dc2626"></div>
     <div class="header">
       <h1>⚡ DB Keep-Alive Manager</h1>
       <div style="display:flex;gap:4px">
@@ -206,6 +207,21 @@ async function api(path, opts) {
 }
 
 // Utility: HTML escape
+
+// Override console to show in debug bar
+var _log = console.log;
+console.log = function() {
+  var msg = Array.prototype.join.call(arguments, " ");
+  _log(msg);
+  dbg(msg);
+};
+var _error = console.error;
+console.error = function() {
+  var msg = Array.prototype.join.call(arguments, " ");
+  _error(msg);
+  dbg("❌ " + msg);
+};
+
 function esc(s) { return String(s).replace(/[&<>"]/g, function(m) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[m]; }); }
 
 // Utility: format relative time
@@ -631,6 +647,12 @@ var TEMPLATES = { supabase: "postgresql://postgres.<project_ref>:<password>@aws-
 function fillTemplate() {
   var t = document.getElementById("add-template").value;
   if (t && TEMPLATES[t]) document.getElementById("add-url").value = TEMPLATES[t];
+}
+
+
+function dbg(msg) {
+  var bar = document.getElementById("debug-bar");
+  if (bar) { bar.style.display = "block"; bar.innerHTML = "🔍 " + msg; }
 }
 
 async function testAdd() {
