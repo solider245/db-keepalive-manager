@@ -634,26 +634,37 @@ function fillTemplate() {
 }
 
 async function testAdd() {
-  var url = document.getElementById("add-url").value.trim();
-  if (!url) return;
-  var btn = document.getElementById("test-add-btn");
-  var st = document.getElementById("add-status");
-  btn.disabled = true; btn.textContent = "测试中...";
-  var res = await api("/api/databases/test", { method: "POST", body: JSON.stringify({ url: url }) });
-  if (res && res.success) {
-    var name = document.getElementById("add-name").value.trim() || url.match(/@([^:.]+)/)?.[1] || "db";
-    var body = { name: name, url: url };
-    var saved = await api("/api/databases", { method: "POST", body: JSON.stringify(body) });
-    if (saved && saved.ok) {
-      st.textContent = "✅";
-      document.getElementById("add-url").value = "";
-      document.getElementById("add-name").value = "";
-      await loadDatabases();
-    } else { st.textContent = "❌ 保存失败"; }
-  } else {
-    st.textContent = "❌ " + (res ? res.error : "连接失败");
+  try {
+    var url = document.getElementById("add-url").value.trim();
+    if (!url) { console.log("testAdd: empty url"); return; }
+    var btn = document.getElementById("test-add-btn");
+    if (!btn) { console.error("testAdd: button not found"); return; }
+    var st = document.getElementById("add-status");
+    btn.disabled = true; btn.textContent = "测试中...";
+    console.log("testAdd: testing " + url.substring(0, 40) + "...");
+    var res = await api("/api/databases/test", { method: "POST", body: JSON.stringify({ url: url }) });
+    console.log("testAdd: result " + JSON.stringify(res).substring(0, 100));
+    if (res && res.success) {
+      var name = document.getElementById("add-name").value.trim() || url.match(/@([^:.]+)/)?.[1] || "db";
+      var body = { name: name, url: url };
+      var saved = await api("/api/databases", { method: "POST", body: JSON.stringify(body) });
+      if (saved && saved.ok) {
+        st.innerHTML = "✅ " + (saved.name || "成功");
+        document.getElementById("add-url").value = "";
+        document.getElementById("add-name").value = "";
+        await loadDatabases();
+      } else { st.innerHTML = "❌ 保存失败"; }
+    } else {
+      st.innerHTML = "❌ " + (res ? (res.error || res.note || "未知错误") : "连接失败");
+    }
+    btn.disabled = false; btn.textContent = "测试并保存";
+  } catch(e) {
+    console.error("testAdd:", e);
+    var st = document.getElementById("add-status");
+    if (st) st.innerHTML = "❌ " + e.message;
+    var btn = document.getElementById("test-add-btn");
+    if (btn) { btn.disabled = false; btn.textContent = "测试并保存"; }
   }
-  btn.disabled = false; btn.textContent = "测试并保存";
 }
 
 </script>
