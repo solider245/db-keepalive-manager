@@ -118,6 +118,25 @@ tr.divider td { border-bottom: 2px solid #eaecf0; padding: 0; height: 0; }
     <!-- Log bar -->
     <div id="log-bar" style="margin-top:8px;padding-top:8px;border-top:1px solid #eaecf0;font-size:12px;color:#667085;display:flex;gap:12px;flex-wrap:wrap;min-height:20px"></div>
 
+    <!-- Add form -->
+    <div class="card">
+      <div style="font-weight:500;margin-bottom:10px">+ 添加数据库</div>
+      <input type="text" id="add-url" placeholder="postgresql://user:password@host:5432/database" style="width:100%;padding:6px 8px;border:1px solid #d0d5dd;border-radius:5px;font-size:13px;font-family:monospace;margin-bottom:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input type="text" id="add-name" placeholder="名称" style="flex:1;min-width:100px;padding:5px 8px;border:1px solid #d0d5dd;border-radius:5px;font-size:13px">
+        <select id="add-template" style="padding:5px 8px;border:1px solid #d0d5dd;border-radius:5px;font-size:12px">
+          <option value="">自定义</option>
+          <option value="supabase">Supabase</option>
+          <option value="neon">Neon</option>
+          <option value="render">Render</option>
+          <option value="aiven">Aiven</option>
+        </select>
+        <button class="btn btn-outline" onclick="fillTemplate()" style="font-size:12px;padding:4px 10px">填入</button>
+        <button class="btn btn-primary" onclick="testAdd()" style="font-size:12px;padding:5px 12px">测试并保存</button>
+        <span id="add-status" style="font-size:12px"></span>
+      </div>
+    </div>
+
     <!-- Settings panel -->
     <div id="settings-panel" style="display:none;margin-top:12px;padding:16px;background:#f9fafb;border:1px solid #eaecf0;border-radius:8px;font-size:13px">
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px">
@@ -607,6 +626,36 @@ if (adminKey) {
   refreshAll();
   setInterval(refreshAll, 30000);
 }
+var TEMPLATES = { supabase: "postgresql://postgres.<project_ref>:<password>@aws-0-region.pooler.supabase.com:5432/postgres", neon: "postgresql://<user>:<password>@ep-<slug>.us-east-2.aws.neon.tech/neondb", render: "postgresql://<user>:<password>@<instance>.render.com/<database>", aiven: "postgresql://<user>:<password>@<project>.aivencloud.com:<port>/<database>" };
+
+function fillTemplate() {
+  var t = document.getElementById("add-template").value;
+  if (t && TEMPLATES[t]) document.getElementById("add-url").value = TEMPLATES[t];
+}
+
+async function testAdd() {
+  var url = document.getElementById("add-url").value.trim();
+  if (!url) return;
+  var btn = document.querySelector("#add-form button:nth-child(4)");
+  var st = document.getElementById("add-status");
+  btn.disabled = true; btn.textContent = "测试中...";
+  var res = await api("/api/databases/test", { method: "POST", body: JSON.stringify({ url: url }) });
+  if (res && res.success) {
+    var name = document.getElementById("add-name").value.trim() || url.match(/@([^:.]+)/)?.[1] || "db";
+    var body = { name: name, url: url };
+    var saved = await api("/api/databases", { method: "POST", body: JSON.stringify(body) });
+    if (saved && saved.ok) {
+      st.textContent = "✅";
+      document.getElementById("add-url").value = "";
+      document.getElementById("add-name").value = "";
+      await loadDatabases();
+    } else { st.textContent = "❌ 保存失败"; }
+  } else {
+    st.textContent = "❌ " + (res ? res.error : "连接失败");
+  }
+  btn.disabled = false; btn.textContent = "测试并保存";
+}
+
 </script>
 </body>
 </html>`;
