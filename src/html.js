@@ -636,7 +636,7 @@ function fillTemplate() {
 async function testAdd() {
   var url = document.getElementById("add-url").value.trim();
   if (!url) return;
-  var btn = document.querySelector("#add-form button:nth-child(4)");
+  var btn = document.getElementById("test-add-btn");
   var st = document.getElementById("add-status");
   btn.disabled = true; btn.textContent = "测试中...";
   var res = await api("/api/databases/test", { method: "POST", body: JSON.stringify({ url: url }) });
