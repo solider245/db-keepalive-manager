@@ -220,6 +220,7 @@ async function pingPostgres(url) {
         msg = '认证失败，请检查用户名和密码';
       else if (msg.includes('timeout') || msg.includes('Timeout'))
         msg = '连接超时，数据库可能处于休眠状态';
+      else msg = err2.message.substring(0, 200);
       return { success: false, error: msg, durationMs: Date.now() - start };
     }
   } finally {
@@ -235,7 +236,7 @@ async function pingSupabase(projectRef, anonKey) {
       await fetch(`https://${projectRef}.supabase.co/`, {
         method: 'HEAD', signal: AbortSignal.timeout(15000),
       });
-      return { success: true, durationMs: Date.now() - start, note: 'wake (no key)' };
+      return { success: true, durationMs: Date.now() - start, note: 'wake (no anon key - add key for real keep-alive)' };
     } catch (err) {
       return { success: false, error: err.message, durationMs: Date.now() - start };
     }

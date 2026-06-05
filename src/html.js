@@ -133,25 +133,25 @@ h2 .count { font-size: 12px; font-weight: 500; color: #039855; margin-left: auto
           <div class="name">Supabase</div>
           <div class="quota">500MB · PostgreSQL</div>
           <span class="tag">免费</span>
-          <div class="get-link">获取连接串 →</div>
+          <div class="get-link" onclick="event.stopPropagation();window.open('https://supabase.com/dashboard/project/_/settings/database','_blank')">👉 获取连接串</div>
         </div>
         <div class="provider-card" onclick="showProviderInfo('neon')">
           <div class="name">Neon</div>
           <div class="quota">500MB · PostgreSQL</div>
           <span class="tag">免费</span>
-          <div class="get-link">获取连接串 →</div>
+          <div class="get-link" onclick="event.stopPropagation();window.open('https://console.neon.tech/app/projects/_/connection_details','_blank')">👉 获取连接串</div>
         </div>
         <div class="provider-card" onclick="showProviderInfo('render')">
           <div class="name">Render</div>
           <div class="quota">1GB · PostgreSQL</div>
           <span class="tag">免费</span>
-          <div class="get-link">获取连接串 →</div>
+          <div class="get-link" onclick="event.stopPropagation();window.open('https://dashboard.render.com/d/u/_/info','_blank')">👉 获取连接串</div>
         </div>
         <div class="provider-card" onclick="showProviderInfo('aiven')">
           <div class="name">Aiven</div>
           <div class="quota">5GB · PostgreSQL</div>
           <span class="tag">免费</span>
-          <div class="get-link">获取连接串 →</div>
+          <div class="get-link" onclick="event.stopPropagation();window.open('https://console.aiven.io','_blank')">👉 获取连接串</div>
         </div>
       </div>
     </div>
@@ -301,9 +301,9 @@ function logout() { sessionStorage.removeItem('adminKey'); adminKey = null; loca
 // Provider info
 function showProviderInfo(provider) {
   const guides = {
-    supabase: { title: 'Supabase 免费版', body: '额度: 500MB PostgreSQL\\n自动暂停: 7 天无活动\\n\\n获取连接串:\\n1. 登录 supabase.com\\n2. 新建项目\\n3. Project Settings → Database → Connection string → 复制 URI\\n\\n连接端口:\\n- 5432: 直连\\n- 6543: PgBouncer 事务池\\n\\n获取 anon key:\\nProject Settings → API → anon public → 复制', link: 'https://supabase.com' },
-    neon: { title: 'Neon 免费版', body: '额度: 500MB PostgreSQL\\n自动暂停: 1 小时无活动\\n\\n获取连接串:\\n1. 登录 console.neon.tech\\n2. 新建项目\\n3. Dashboard → Connection Details → 复制', link: 'https://console.neon.tech' },
-    render: { title: 'Render 免费版', body: '额度: 1GB PostgreSQL\\n自动暂停: 15 分钟无活动\\n\\n获取连接串:\\n1. 登录 dashboard.render.com\\n2. New PostgreSQL\\n3. 创建后复制 Internal Database URL', link: 'https://dashboard.render.com' },
+    supabase: { title: 'Supabase 免费版', body: '额度: 500MB PostgreSQL\\n自动暂停: 7 天无活动\\n\\n获取连接串:\\n1. 登录 supabase.com\\n2. 新建项目\\n3. Project Settings → Database → Connection string → 复制 URI\\n\\n连接端口:\\n- 5432: 直连\\n- 6543: PgBouncer 事务池\\n\\n获取 anon key:\\nProject Settings → API → anon public → 复制', link: 'https://supabase.com/dashboard/project/_/settings/database' },
+    neon: { title: 'Neon 免费版', body: '额度: 500MB PostgreSQL\\n自动暂停: 1 小时无活动\\n\\n获取连接串:\\n1. 登录 console.neon.tech\\n2. 新建项目\\n3. Dashboard → Connection Details → 复制', link: 'https://console.neon.tech/app/projects/_/connection_details' },
+    render: { title: 'Render 免费版', body: '额度: 1GB PostgreSQL\\n自动暂停: 15 分钟无活动\\n\\n获取连接串:\\n1. 登录 dashboard.render.com\\n2. New PostgreSQL\\n3. 创建后复制 Internal Database URL', link: 'https://dashboard.render.com/d/u/_/info' },
     aiven: { title: 'Aiven 免费版', body: '额度: 5GB PostgreSQL\\n自动暂停: 无(始终运行)\\n\\n获取连接串:\\n1. 登录 console.aiven.io\\n2. 创建服务 → PostgreSQL\\n3. Connection Info → 复制 URI', link: 'https://console.aiven.io' }
   };
   const info = guides[provider];
@@ -363,7 +363,10 @@ async function loadDatabases() {
       '<td class="url-cell" title="' + esc(db.displayUrl || '') + '">' + esc(truncate(db.displayUrl || '', 55)) + '</td>' +
       '<td ondblclick="editName(\\'' + db.id + '\\',this)" title="双击编辑">' + esc(db.name) + '</td>' +
       '<td>' + esc(db.type || 'postgres') + (db.anonKey ? '<br><span style="font-size:10px;color:#6366f1">\ud83d\udd11\u5df2\u914d\u7f6e</span>' : '') + '</td>' +
-      '<td class="' + cls + '"><span class="status-dot"></span>' + txt + '</td>' +
+      '<td class="' + cls + '" title="' + (db.lastError ? esc(db.lastError) : '') + '" style="cursor:' + (db.lastError ? 'help' : 'default') + '">' +
+        '<span class="status-dot"></span>' + txt +
+        (db.lastError ? '<span style="margin-left:4px;cursor:pointer;font-size:11px;color:#dc2626" onclick="alert(\\'' + esc(db.lastError) + '\\')">ⓘ</span>' : '') +
+      '</td>' +
       '<td>' +
         '<button class="btn-icon" onclick="pingOne(\\'' + db.id + '\\')" title="保活">⚡</button>' +
         (db.consoleUrl ? '<button class="btn-icon" onclick="window.open(\\'' + esc(db.consoleUrl) + '\\',\\'_blank\\')" title="打开后台">🔗</button>' : '') +
@@ -374,9 +377,12 @@ async function loadDatabases() {
 
   // New row (Excel style - always blank at bottom)
   html += '<tr>' +
-    '<td><input type="text" id="new-url" placeholder="粘贴连接串..." oninput="onPasteUrl(this.value)" onkeydown="if(event.key===\\'Enter\\')testNew()"></td>' +
+    '<td style="position:relative">' +
+      '<input type="text" id="new-url" placeholder="粘贴连接串..." oninput="onPasteUrl(this.value)" onkeydown="if(event.key===\\'Enter\\')testNew()">' +
+      '<span id="url-hint" style="display:none;font-size:11px;margin-top:2px;color:#667085"></span>' +
+    '</td>' +
     '<td><span id="new-name" style="color:#98a2b3;font-size:12px">自动识别</span></td>' +
-    '<td><span id="new-type" style="color:#98a2b3;font-size:12px">-</span></td>' +
+    '<td><span id="new-type" style="font-size:12px">-</span></td>' +
     '<td><span id="new-status"></span></td>' +
     '<input type="text" id="new-anonkey" placeholder="anon key (Supabase需要)" style="display:none;font-size:11px;padding:2px 6px;width:100%;margin-bottom:2px;border:1px solid #d0d5dd;border-radius:4px">' +
     '<button class="btn btn-outline" onclick="testNew()" id="test-new-btn" style="font-size:12px;padding:3px 8px">测试</button></td>' +
@@ -402,8 +408,33 @@ async function loadDatabases() {
 let detectTimer = null;
 async function onPasteUrl(url) {
   clearTimeout(detectTimer);
-  if (!url || url.length < 10) return;
-  // Basic URL format check
+  const hint = document.getElementById('url-hint');
+  if (!url || url.length < 15) {
+    if (hint) { hint.style.display = 'none'; hint.textContent = ''; }
+    return;
+  }
+
+  // Show hint based on URL pattern
+  const patterns = [
+    { regex: /supabase\.co|pooler\.supabase\.com/i, hint: '📌 检测到 Supabase，请在下方补充 anon key' },
+    { regex: /neon\.tech/i, hint: '✅ Neon 直连保活，无需额外配置' },
+    { regex: /render\.com/i, hint: '⚠️ Render 请使用 External URL，非 Internal URL' },
+    { regex: /aivencloud\.com/i, hint: '✅ Aiven 直连保活，无需额外配置' },
+    { regex: /fly\.io/i, hint: '✅ Fly.io PostgreSQL 直连保活' },
+    { regex: /railway\.app/i, hint: '✅ Railway 直连保活' },
+  ];
+
+  let matchedHint = '';
+  for (const p of patterns) {
+    if (p.regex.test(url)) { matchedHint = p.hint; break; }
+  }
+
+  if (hint) {
+    hint.textContent = matchedHint;
+    hint.style.display = matchedHint ? '' : 'none';
+  }
+
+  // Format check
   if (!url.startsWith('postgresql://') && !url.startsWith('postgres://') && !url.startsWith('redis://')) {
     document.getElementById('new-type').textContent = '格式?';
     return;
