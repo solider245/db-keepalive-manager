@@ -26,14 +26,14 @@ No build step, no extra infrastructure — deploy once and forget.
 - **Web UI** — No build step, no frontend framework. Open the URL and go.
 - **One-click deploy** — Fork + Deploy button = done.
 - **AES-256 encrypted** connection strings at rest.
-- **Auto keep-alive** every 10 minutes via Cloudflare Cron Trigger.
+- **Auto keep-alive** once daily (configurable cron) via Cloudflare Cron Trigger.
 - **Failure retry** — Automatically retries once after 3 seconds on failure.
 - **Batch import** — Paste multiple connection strings at once.
 - **Telegram alerts** — Get notified when a database fails to respond.
 - **Scheduled reports** — Configurable daily / weekly / monthly summaries via Telegram.
-- **Export / import config** — Backup and restore your database list as JSON.
+- **Export / import** — Supports JSON (full backup) and connection string list (quick copy/paste).
 - **Double-click editing** — Rename any database by double-clicking its name.
-- **Provider auto-detection** — Automatically detects Supabase, Neon, Render, Aiven, Fly.io, Railway and more.
+- **Provider auto-detection** — Automatically detects Supabase, Neon, Render, Aiven, Fly.io, Railway, InsForge and more.
 - **Provider info cards** — Quick guides to get free database connection strings.
 - **Status badge** — Ready for your own README status badge.
 
@@ -69,10 +69,10 @@ npm run setup
    postgresql://user:password@host:5432/database
    ```
 4. Click **Test** — the Worker will attempt to connect and show the result.
-5. On success, the database is saved automatically and will be kept alive every 10 minutes.
+5. On success, the database is saved automatically and will be kept alive daily via cron.
 6. Monitor status at a glance: green = healthy, red = failing, gray = not yet checked.
 
-> To also get Telegram alerts and reports, configure the bot token and chat ID in the settings panel (click the gear icon).
+> To also get Telegram alerts and reports, configure the bot token and chat ID in the settings panel at the bottom of the page.
 
 ## Telegram Notifications
 
@@ -119,13 +119,13 @@ Send `/status` to your bot to get the current status of all databases on demand.
                             │
                     ┌───────▼────────┐
                     │  Cron Trigger  │
-                    │  (*/10 * * * *)│
+                    │  (0 0 * * *)  │
                     └────────────────┘
 ```
 
 - **Worker** (`src/index.js`) — Serves the web UI, handles API requests, encrypts connection strings, performs pings, sends Telegram notifications.
 - **KV** (`DATABASE_KV`) — Stores encrypted connection strings, ping logs, and notification configuration.
-- **Cron Trigger** — Fires every 10 minutes to ping all databases in the background.
+- **Cron Trigger** — Fires once daily to ping all databases in the background.
 - **postgres.js** — The only runtime dependency, used for lightweight PostgreSQL connections.
 
 ## Local Development

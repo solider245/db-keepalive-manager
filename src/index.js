@@ -1,195 +1,31 @@
 import postgres from 'postgres';
-import { renderHTML } from './html.js';
-
-// ============ Crypto ============
-
-async function deriveKey(adminKey) {
-  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(adminKey));
-  return crypto.subtle.importKey('raw', hash, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-}
-
-async function encrypt(text, adminKey) {
-  const key = await deriveKey(adminKey);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(text));
-  const combined = new Uint8Array(iv.length + encrypted.byteLength);
-  combined.set(iv);
-  combined.set(new Uint8Array(encrypted), iv.length);
-  return btoa(String.fromCharCode(...combined));
-}
-
-async function decrypt(data, adminKey) {
-  const key = await deriveKey(adminKey);
-  const combined = Uint8Array.from(atob(data), (c) => c.charCodeAt(0));
-  const iv = combined.slice(0, 12);
-  const encrypted = combined.slice(12);
-  const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encrypted);
-  return new TextDecoder().decode(decrypted);
-}
-
-// ============ KV Storage ============
-
-async function getDatabases(env) {
-  return (await env.DATABASE_KV.get('databases', 'json')) || [];
-}
-
-async function setDatabases(env, dbs) {
-  await env.DATABASE_KV.put('databases', JSON.stringify(dbs));
-}
-
-async function getLogs(env) {
-  return (await env.DATABASE_KV.get('logs', 'json')) || [];
-}
-
-async function appendLog(env, entry) {
-  const logs = await getLogs(env);
-  logs.unshift(entry);
-  if (logs.length > 10) logs.length = 10;
-  await env.DATABASE_KV.put('logs', JSON.stringify(logs));
-}
-
-async function getConfig(env) {
-  return (await env.DATABASE_KV.get('config', 'json')) || {};
-}
-
-async function setConfig(env, cfg) {
-  await env.DATABASE_KV.put('config', JSON.stringify(cfg));
-}
-
-async function sendTelegram(env, message, customChatId) {
-  const cfg = await getConfig(env);
-  const chatId = customChatId || cfg.telegramChatId;
-  if (!cfg.telegramBotToken || !chatId) return;
-  try {
-    await fetch(`https://api.telegram.org/bot${cfg.telegramBotToken}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'Markdown' }),
-    });
-  } catch (e) {
-    console.error('Telegram send failed:', e.message);
-  }
-}
-
-async function sendNotification(env, type, data) {
-  const cfg = await getConfig(env);
-  const reportFreq = cfg.reportFrequency || 'daily';
-
-  // Check if it's time for a scheduled report
-  if (type === 'report' && reportFreq !== 'never') {
-    const now = new Date();
-    const lastReport = cfg.lastReportDate || 0;
-    const shouldSend = reportFreq === 'daily'
-      ? now.toDateString() !== new Date(lastReport).toDateString()
-      : reportFreq === 'weekly'
-        ? now.getDay() === 1 && now.toDateString() !== new Date(lastReport).toDateString()
-        : reportFreq === 'monthly'
-          ? now.getDate() === 1 && now.toDateString() !== new Date(lastReport).toDateString()
-          : false;
-
-    if (shouldSend) {
-      cfg.lastReportDate = now.getTime();
-      await setConfig(env, cfg);
-      const dbs = await getDatabases(env);
-      const total = dbs.length;
-      const ok = dbs.filter(d => d.lastSuccess === true).length;
-      const fail = dbs.filter(d => d.lastSuccess === false).length;
-      const msg = `📊 *DB Keep-Alive 报告*\n时间: ${now.toLocaleDateString('zh-CN')}\n数据库: ${total} 个\n正常: ${ok} 个\n异常: ${fail} 个\n成功率: ${total ? Math.round(ok/total*100) : 100}%`;
-      await sendTelegram(env, msg);
-    }
-  }
-
-  // Send failure alert
-  if (type === 'failure' && data.failed > 0) {
-    const msg = `⚠️ *保活异常通知*\n${data.failed} 个数据库保活失败，请检查:\n${data.names.map(n => `- ${n}`).join('\n')}`;
-    await sendTelegram(env, msg);
-  }
-}
+import { connect } from 'cloudflare:sockets';
+import { renderHTML } from './render.js';
+import { getDatabases, setDatabases, getLogs, appendLog, getConfig, setConfig } from './db.js';
+import { sendTelegram, sendNotification, handleTelegramCommand, renderReport } from './tg.js';
+import { encrypt, decrypt, detectDbType, detectDatabase, getSupabaseProjectRef, maskUrl } from './utils.js';
 
 // ============ Pinger ============
 
-function detectDbType(url) {
+// Lightweight TCP reachability test for the test endpoint
+async function testTcpReachable(urlStr, timeoutMs = 8000) {
+  const start = Date.now();
   try {
-    const u = new URL(url);
+    const u = new URL(urlStr);
     const host = u.hostname;
-    const port = u.port || '5432';
-    // Only pooler port 6543 has TLS issues in workerd
-    if ((host.includes('supabase.co') || host.includes('pooler.supabase.com')) && port === '6543') return 'supabase-http';
-  } catch {}
-  return 'postgres';
-}
-
-function getSupabaseProjectRef(url) {
-  // Extract from username: postgres.<project_ref>
-  const u = new URL(url);
-  const user = decodeURIComponent(u.username);
-  if (user && user.includes('.')) return user.split('.')[1];
-  // Fallback: extract from hostname
-  if (u.hostname.endsWith('.supabase.co')) return u.hostname.split('.')[0];
-  return null;
-}
-
-function detectDatabase(url) {
-  const host = new URL(url).hostname;
-  const u = new URL(url);
-  const user = decodeURIComponent(u.username);
-  let projectRef = null;
-  let type = 'postgres';
-  let consoleUrl = null;
-  let detectedName = null;
-
-  if (host.includes('supabase.co') || host.includes('pooler.supabase.com')) {
-    type = 'supabase-http';
-    if (user && user.includes('.')) projectRef = user.split('.')[1];
-    else if (host.endsWith('.supabase.co')) projectRef = host.split('.')[0];
-    detectedName = projectRef ? projectRef.substring(0, 12) : 'Supabase';
-    consoleUrl = projectRef ? 'https://supabase.com/dashboard/project/' + projectRef : 'https://supabase.com/dashboard';
-  } else if (host.includes('neon.tech')) {
-    const match = host.match(/^([^.]+)/);
-    projectRef = match ? match[1] : null;
-    detectedName = projectRef ? projectRef.substring(0, 12) : 'Neon';
-    consoleUrl = 'https://console.neon.tech/projects';
-  } else if (host.includes('render.com')) {
-    const match = host.match(/^([^.]+)/);
-    detectedName = match ? match[1].substring(0, 12) : 'Render';
-    consoleUrl = 'https://dashboard.render.com/databases';
-  } else if (host.includes('aivencloud.com')) {
-    const match = host.match(/^([^.]+)/);
-    detectedName = match ? match[1].substring(0, 12) : 'Aiven';
-    consoleUrl = 'https://console.aiven.io';
-  } else if (host.includes('fly.io')) {
-    const match = host.match(/^([^.]+)/);
-    detectedName = match ? match[1].substring(0, 12) : 'Fly.io';
-    consoleUrl = 'https://fly.io/dashboard';
-  } else if (host.includes('railway.app')) {
-    const match = host.match(/^([^.]+)/);
-    detectedName = match ? match[1].substring(0, 12) : 'Railway';
-    consoleUrl = 'https://railway.app/dashboard';
-  } else if (host.includes('cyclic.sh')) {
-    const match = host.match(/^([^.]+)/);
-    detectedName = match ? match[1].substring(0, 12) : 'Cyclic';
-    consoleUrl = null;
-  } else if (host.includes('alwaysdata.net')) {
-    const match = host.match(/^([^.]+)/);
-    detectedName = match ? match[1].substring(0, 12) : 'Alwaysdata';
-    consoleUrl = null;
-  } else {
-    detectedName = host.split('.')[0] || 'PostgreSQL';
-    consoleUrl = null;
-  }
-
-  return { type, projectRef, detectedName, consoleUrl };
-}
-
-function maskUrl(url) {
-  try {
-    const u = new URL(url);
-    const host = u.hostname;
-    const db = u.pathname === '/' ? '' : u.pathname;
-    const params = u.search || '';
-    return u.protocol + '//' + host + (u.port ? ':' + u.port : '') + db + params;
-  } catch {
-    return url.substring(0, 50);
+    const port = parseInt(u.port || '5432');
+    const socket = await connect({ hostname: host, port, timeout: timeoutMs });
+    socket.close();
+    return { success: true, durationMs: Date.now() - start };
+  } catch (err) {
+    let msg = err.message || String(err);
+    if (msg.includes('timeout') || msg.includes('Timeout'))
+      msg = '连接超时，数据库可能不可达';
+    else if (msg.includes('refused'))
+      msg = '连接被拒绝，请检查端口';
+    else
+      msg = msg.substring(0, 200);
+    return { success: false, error: msg, durationMs: Date.now() - start };
   }
 }
 
@@ -197,34 +33,28 @@ async function pingPostgres(url) {
   const start = Date.now();
   const sql = postgres(url, {
     max: 1,
+    connect_timeout: 10,
     ssl: { rejectUnauthorized: false },
     connection: { application_name: 'db-keepalive' },
   });
   try {
     await Promise.race([
       sql`SELECT 1`,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout after 10s')), 10000)),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout after 20s')), 20000)),
     ]);
     return { success: true, durationMs: Date.now() - start };
   } catch (err) {
-    // Retry once after 3 seconds
-    await new Promise(r => setTimeout(r, 3000));
-    try {
-      await sql`SELECT 1`;
-      return { success: true, durationMs: Date.now() - start, retried: true };
-    } catch (err2) {
-      let msg = err2.message;
-      if (msg.includes('connect') || msg.includes('refused') || msg.includes('ECONN'))
-        msg = '无法连接到数据库，请检查连接串和网络';
-      else if (msg.includes('auth') || msg.includes('password') || msg.includes('login'))
-        msg = '认证失败，请检查用户名和密码';
-      else if (msg.includes('timeout') || msg.includes('Timeout'))
-        msg = '连接超时，数据库可能处于休眠状态';
-      else msg = err2.message.substring(0, 200);
-      return { success: false, error: msg, durationMs: Date.now() - start };
-    }
+    let msg = err.message;
+    if (msg.includes('connect') || msg.includes('refused') || msg.includes('ECONN'))
+      msg = '无法连接到数据库，请检查连接串和网络';
+    else if (msg.includes('auth') || msg.includes('password') || msg.includes('login'))
+      msg = '认证失败，请检查用户名和密码';
+    else if (msg.includes('timeout') || msg.includes('Timeout'))
+      msg = '连接超时，数据库可能处于休眠状态';
+    else msg = err.message.substring(0, 200);
+    return { success: false, error: msg, durationMs: Date.now() - start };
   } finally {
-    await sql.end().catch(() => {});
+    sql.end().catch(() => {});
   }
 }
 
@@ -263,7 +93,16 @@ async function pingDatabase(url, anonKey) {
     if (!ref) return { success: false, error: 'Cannot detect Supabase project ref from URL' };
     return pingSupabase(ref, anonKey);
   }
-  return pingPostgres(url);
+  // TCP keepalive (fast, reliable, enough to prevent DB from sleeping)
+  const tcp = await testTcpReachable(url, 8000);
+  if (!tcp.success) return tcp;
+  // Only try full PG health check for known-compatible hosts (Neon)
+  // Skip for Render/Aiven/etc. where postgres.js hits subrequest limits
+  if (url.includes('neon.tech')) {
+    const pg = await pingPostgres(url);
+    if (pg.success) return pg;
+  }
+  return { success: true, durationMs: tcp.durationMs, note: 'TCP reachable' };
 }
 
 // ============ Auth ============
@@ -308,33 +147,7 @@ export default {
     // Telegram webhook (receive messages from bot)
     if (method === 'POST' && pathname === '/api/telegram/webhook') {
       const body = await request.json();
-      const msg = body.message?.text || '';
-      const chatId = body.message?.chat?.id;
-      if (!chatId) return Response.json({ ok: true });
-
-      // Read config to verify chat ID matches
-      const cfg = await getConfig(env);
-
-      if (msg === '/start') {
-        await sendTelegram(env, '👋 *DB Keep-Alive Bot*\\n发送 /status 查看当前数据库状态');
-      } else if (msg === '/status') {
-        const dbs = await getDatabases(env);
-        const total = dbs.length;
-        const ok = dbs.filter(d => d.lastSuccess === true).length;
-        const fail = dbs.filter(d => d.lastSuccess === false).length;
-        let text = '📊 *DB Keep-Alive 状态*\\n\\n';
-        text += `总计: ${total} 个数据库\\n正常: ${ok} 个\\n异常: ${fail} 个\\n\\n`;
-        for (const db of dbs) {
-          const icon = db.lastSuccess === true ? '✅' : db.lastSuccess === false ? '❌' : '⚪';
-          text += `${icon} ${db.name} (${db.type || 'postgres'})\\n`;
-        }
-        if (cfg.telegramChatId && String(chatId) !== String(cfg.telegramChatId)) {
-          // Unauthorized chat - silently ignore
-          return Response.json({ ok: true });
-        }
-        await sendTelegram(env, text);
-      }
-      return Response.json({ ok: true });
+      return Response.json(await handleTelegramCommand(body, env));
     }
 
     // Public status endpoint (no auth required)
@@ -405,11 +218,11 @@ export default {
         return Response.json(safe);
       }
 
-      // Test connection (without saving)
+      // Test connection (without saving) — lightweight TCP check
       if (method === 'POST' && pathname === '/api/databases/test') {
         const { url: dbUrl } = await request.json();
         if (!dbUrl) return Response.json({ error: 'URL is required' }, { status: 400 });
-        const result = await pingDatabase(dbUrl, undefined);
+        const result = await testTcpReachable(dbUrl);
         return Response.json(result);
       }
 
@@ -429,6 +242,12 @@ export default {
         const idx = dbs.findIndex(d => d.id === id);
         if (idx === -1) return Response.json({ error: 'Not found' }, { status: 404 });
         if (body.name) dbs[idx].name = body.name;
+        if (body.url) {
+          dbs[idx].encryptedUrl = await encrypt(body.url, env.ADMIN_KEY);
+          dbs[idx].displayUrl = maskUrl(body.url);
+          const info = detectDatabase(body.url);
+          if (info.consoleUrl) dbs[idx].consoleUrl = info.consoleUrl;
+        }
         await setDatabases(env, dbs);
         return Response.json({ ok: true });
       }
@@ -440,6 +259,7 @@ export default {
           telegramBotToken: cfg.telegramBotToken ? '✓已配置' : '',
           telegramChatId: cfg.telegramChatId || '',
           reportFrequency: cfg.reportFrequency || 'daily',
+          messageTemplate: cfg.messageTemplate || '',
         });
       }
 
@@ -449,6 +269,7 @@ export default {
         if (body.telegramBotToken) cfg.telegramBotToken = body.telegramBotToken;
         if (body.telegramChatId) cfg.telegramChatId = body.telegramChatId;
         if (body.reportFrequency) cfg.reportFrequency = body.reportFrequency;
+        if (body.messageTemplate !== undefined) cfg.messageTemplate = body.messageTemplate;
         await setConfig(env, cfg);
         return Response.json({ ok: true });
       }
@@ -459,7 +280,14 @@ export default {
         if (!cfg.telegramBotToken || !cfg.telegramChatId) {
           return Response.json({ error: '请先配置 Telegram' }, { status: 400 });
         }
-        await sendTelegram(env, '✅ *DB Keep-Alive* 通知测试成功！\n你的机器人已正确配置。');
+        const body = await request.json().catch(() => ({}));
+        if (body && body.template) {
+          const dbs = await getDatabases(env);
+          const reportText = renderReport(dbs, body.template);
+          await sendTelegram(env, reportText);
+        } else {
+          await sendTelegram(env, '✅ *DB Keep-Alive* 通知测试成功！\n你的机器人已正确配置。');
+        }
         return Response.json({ ok: true });
       }
 
@@ -513,6 +341,7 @@ export default {
             const result = await pingDatabase(dbUrl, db.anonKey);
             db.lastPingAt = Date.now();
             db.lastSuccess = result.success;
+            db.lastNote = result.note || null;
             db.lastError = result.error || null;
             await appendLog(env, {
               dbId: db.id,
@@ -529,7 +358,7 @@ export default {
         // Send notifications
         const failed = results.filter(r => !r.success);
         await sendNotification(env, 'failure', { failed: failed.length, names: failed.map(r => r.name) });
-        await sendNotification(env, 'report', {});
+        await sendNotification(env, 'report', {}, dbs);
         await setDatabases(env, dbs);
         return Response.json(results);
       }
@@ -545,6 +374,7 @@ export default {
         const result = await pingDatabase(dbUrl, db.anonKey);
         db.lastPingAt = Date.now();
         db.lastSuccess = result.success;
+        db.lastNote = result.note || null;
         db.lastError = result.error || null;
         await appendLog(env, {
           dbId: db.id, dbName: db.name, timestamp: Date.now(),
@@ -599,6 +429,7 @@ export default {
         const result = await pingDatabase(dbUrl, db.anonKey);
         db.lastPingAt = Date.now();
         db.lastSuccess = result.success;
+        db.lastNote = result.note || null;
         db.lastError = result.error || null;
         await appendLog(env, {
           dbId: db.id,
@@ -613,13 +444,12 @@ export default {
       }
     }
     await setDatabases(env, dbs);
-    // Send notifications
-    const allDbs = await getDatabases(env);
-    const failed = allDbs.filter(d => d.lastSuccess === false);
+    // Send notifications (reuse in-memory dbs)
+    const failed = dbs.filter(d => d.lastSuccess === false);
     if (failed.length > 0) {
-      await sendNotification(env, 'failure', { failed: failed.length, names: failed.map(d => d.name) });
+      await sendNotification(env, 'failure', { failed: failed.length, names: failed.map(d => d.name) }, dbs);
     }
-    await sendNotification(env, 'report', {});
+    await sendNotification(env, 'report', {}, dbs);
     console.log(`[keepalive] Complete at ${new Date().toISOString()}`);
   },
 };
